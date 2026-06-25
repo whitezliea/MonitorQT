@@ -42,8 +42,8 @@ private:
         qint64 revision);
 
     mutable QMutex m_mutex;
-    QHash<QString, TagRuntimeConfiguration> m_snapshot;
     qint64 m_revision = 0;
+    QHash<QString, TagRuntimeConfiguration> m_snapshot;
 };
 
 } // namespace Monitor::Application::Configuration

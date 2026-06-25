@@ -22,7 +22,8 @@ TagRuntimeConfiguration TagRuntimeConfiguration::fromDefinition(const Monitor::D
 }
 
 TagRuntimeConfigurationStore::TagRuntimeConfigurationStore(const QVector<TagRuntimeConfiguration> &defaults)
-    : m_snapshot(createSnapshot(defaults, m_revision))
+    : m_revision(0),
+      m_snapshot(createSnapshot(defaults, m_revision))
 {
 }
 

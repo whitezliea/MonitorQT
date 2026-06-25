@@ -51,6 +51,10 @@ set(DOMAIN_SOURCES
 set(APPLICATION_SOURCES
     application/ApplicationLayer.cpp
     application/ApplicationLayer.h
+    application/caches/MatrixFrameCache.cpp
+    application/caches/MatrixFrameCache.h
+    application/caches/TagCache.cpp
+    application/caches/TagCache.h
     application/configuration/ConfigurationValidation.cpp
     application/configuration/ConfigurationValidation.h
     application/configuration/MonitorRuntimeOptions.cpp
@@ -61,10 +65,25 @@ set(APPLICATION_SOURCES
     application/configuration/TagRuntimeConfiguration.h
     application/configuration/TrendDiagnosisOptions.cpp
     application/configuration/TrendDiagnosisOptions.h
+    application/dto/ApplicationDtos.h
     application/events/EventBus.cpp
     application/events/EventBus.h
+    application/pipelines/DataCleanPipeline.cpp
+    application/pipelines/DataCleanPipeline.h
+    application/services/AlarmService.cpp
+    application/services/AlarmService.h
+    application/services/ChartDataService.cpp
+    application/services/ChartDataService.h
+    application/services/DashboardService.cpp
+    application/services/DashboardService.h
+    application/services/MeasurementMapAnalysis.cpp
+    application/services/MeasurementMapAnalysis.h
+    application/services/MeasurementMapService.cpp
+    application/services/MeasurementMapService.h
     application/services/TagDefinitionCatalog.cpp
     application/services/TagDefinitionCatalog.h
+    application/services/TagService.cpp
+    application/services/TagService.h
 )
 
 set(INFRASTRUCTURE_SOURCES
