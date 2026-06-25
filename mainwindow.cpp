@@ -2,6 +2,7 @@
 
 #include "navigation/NavigationService.h"
 #include "pages/PagePlaceholderWidget.h"
+#include "phase0/SourceBehaviorFreeze.h"
 #include "shell/BottomStatusBarWidget.h"
 #include "shell/SideNavigationWidget.h"
 #include "shell/TopStatusBarWidget.h"
@@ -40,7 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     setRunningState(false);
     refreshShellClock();
     m_navigationService->navigateTo(NavigationPage::Dashboard);
-    m_shellTimer->start(RefreshIntervalMs);
+    m_shellTimer->start(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
 }
 
 MainWindow::~MainWindow() = default;
@@ -121,7 +122,9 @@ void MainWindow::setupUi()
 
     m_navigationService = new NavigationService(m_pageStack, this);
     m_shellTimer = new QTimer(this);
-    m_shellTimer->setInterval(RefreshIntervalMs);
+    m_shellTimer->setInterval(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
+    m_topStatusBar->setDeviceId(Phase0::defaultDeviceId());
+    m_bottomStatusBar->setRefreshIntervalMs(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
 }
 
 void MainWindow::createPages()

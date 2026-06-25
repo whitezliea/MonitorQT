@@ -1,6 +1,8 @@
 #include "mainwindow.h"
+#include "phase0/SourceBehaviorFreeze.h"
 
 #include <QApplication>
+#include <QDebug>
 #include <QLocale>
 #include <QTranslator>
 
@@ -17,6 +19,14 @@ int main(int argc, char *argv[])
             break;
         }
     }
+
+    QStringList phase0Errors;
+    if (!Phase0::validateSourceBehaviorFreeze(&phase0Errors)) {
+        qCritical().noquote() << "Phase 0 source behavior freeze validation failed:"
+                              << phase0Errors.join(QStringLiteral("; "));
+        return 2;
+    }
+
     MainWindow w;
     w.show();
     return QApplication::exec();

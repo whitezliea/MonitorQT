@@ -23,6 +23,8 @@ set(APP_SOURCES
         navigation/NavigationService.h
         pages/PagePlaceholderWidget.cpp
         pages/PagePlaceholderWidget.h
+        phase0/SourceBehaviorFreeze.cpp
+        phase0/SourceBehaviorFreeze.h
         shell/BottomStatusBarWidget.cpp
         shell/BottomStatusBarWidget.h
         shell/SideNavigationWidget.cpp
@@ -64,6 +66,7 @@ else()
 endif()
 
 target_link_libraries(MonitorQT PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+target_compile_options(MonitorQT PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an

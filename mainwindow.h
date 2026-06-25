@@ -43,7 +43,5 @@ private:
 
     bool m_running = false;
     quint64 m_lastFrame = 0;
-
-    static constexpr int RefreshIntervalMs = 1000;
 };
 #endif // MAINWINDOW_H

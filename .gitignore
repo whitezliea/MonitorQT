@@ -95,3 +95,6 @@ core
 # MinGW and Qt Creator kit folders
 *.Debug
 *.Release
+
+# reference folder
+MyProject/
