@@ -134,6 +134,37 @@ bool MonitoringRuntimeService::publishOfflineStatesIfTimedOut(
         errors);
 }
 
+bool MonitoringRuntimeService::acknowledgeAlarm(
+    const QUuid &alarmId,
+    const QDateTime &acknowledgedAtUtc,
+    Monitor::Domain::Alarms::AlarmEvent *acknowledgedAlarm,
+    QStringList *errors)
+{
+    Monitor::Domain::Alarms::AlarmEvent localAcknowledged;
+    if (!m_alarmService->acknowledge(alarmId, acknowledgedAtUtc, &localAcknowledged)) {
+        if (acknowledgedAlarm) {
+            *acknowledgedAlarm = {};
+        }
+        if (errors) {
+            errors->append(QStringLiteral("Alarm cannot be acknowledged or is not active: %1.")
+                .arg(alarmId.toString(QUuid::WithoutBraces)));
+        }
+        return false;
+    }
+
+    if (!m_eventBus->publish(Monitor::Application::Events::AlarmAcknowledgedEvent{localAcknowledged}, errors)) {
+        if (acknowledgedAlarm) {
+            *acknowledgedAlarm = localAcknowledged;
+        }
+        return false;
+    }
+
+    if (acknowledgedAlarm) {
+        *acknowledgedAlarm = localAcknowledged;
+    }
+    return true;
+}
+
 DataSourceHealthMonitor &MonitoringRuntimeService::healthMonitor()
 {
     return *m_healthMonitor;

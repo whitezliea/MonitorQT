@@ -12,6 +12,7 @@ namespace Monitor::Infrastructure::Persistence {
 namespace {
 
 constexpr int MaximumOperationLogCount = 5000;
+constexpr int MaximumOperationLogPageSize = 1000;
 
 void throwSql(const QString &message, const QSqlQuery &query)
 {
@@ -82,6 +83,12 @@ void validate(const Monitor::Domain::Logs::OperationLogQuery &query)
     }
     if (query.maxCount < 0 || query.maxCount > MaximumOperationLogCount) {
         throw std::out_of_range("Operation log maxCount must be between 0 and 5000.");
+    }
+    if (query.page <= 0) {
+        throw std::out_of_range("Operation log page must be greater than zero.");
+    }
+    if (query.pageSize <= 0 || query.pageSize > MaximumOperationLogPageSize) {
+        throw std::out_of_range("Operation log pageSize is out of range.");
     }
 }
 
@@ -207,6 +214,63 @@ QVector<Monitor::Domain::Logs::OperationLog> SQLiteOperationLogRepository::query
     }
 
     return readLogs(query);
+}
+
+Monitor::Domain::Logs::OperationLogQueryResult SQLiteOperationLogRepository::queryPage(
+    const Monitor::Domain::Logs::OperationLogQuery &operationLogQuery)
+{
+    validate(operationLogQuery);
+
+    auto connection = m_connectionFactory->openReadConnection();
+    auto &database = connection.database();
+    const auto where = QStringLiteral(R"SQL(
+        WHERE timestamp_utc_ticks >= :startTimeUtcTicks
+          AND timestamp_utc_ticks <= :endTimeUtcTicks
+          AND (:level IS NULL OR level = :level)
+          AND (:category = '' OR category = :category COLLATE NOCASE)
+    )SQL");
+
+    QSqlQuery countQuery(database);
+    countQuery.prepare(QStringLiteral("SELECT COUNT(*) FROM operation_logs %1;").arg(where));
+    countQuery.bindValue(QStringLiteral(":startTimeUtcTicks"), ticks(operationLogQuery.startTimeUtc));
+    countQuery.bindValue(QStringLiteral(":endTimeUtcTicks"), ticks(operationLogQuery.endTimeUtc));
+    countQuery.bindValue(QStringLiteral(":level"), operationLogQuery.level.has_value()
+            ? QVariant(static_cast<int>(operationLogQuery.level.value()))
+            : QVariant());
+    countQuery.bindValue(QStringLiteral(":category"), operationLogQuery.category.has_value()
+            ? operationLogQuery.category->trimmed()
+            : QString());
+    if (!countQuery.exec() || !countQuery.next()) {
+        throwSql(QStringLiteral("Failed to count operation logs"), countQuery);
+    }
+
+    QSqlQuery query(database);
+    query.prepare(selectColumns() + QStringLiteral(R"SQL(
+        FROM operation_logs
+        %1
+        ORDER BY timestamp_utc_ticks DESC, id DESC
+        LIMIT :pageSize OFFSET :offset;
+    )SQL").arg(where));
+    query.bindValue(QStringLiteral(":startTimeUtcTicks"), ticks(operationLogQuery.startTimeUtc));
+    query.bindValue(QStringLiteral(":endTimeUtcTicks"), ticks(operationLogQuery.endTimeUtc));
+    query.bindValue(QStringLiteral(":level"), operationLogQuery.level.has_value()
+            ? QVariant(static_cast<int>(operationLogQuery.level.value()))
+            : QVariant());
+    query.bindValue(QStringLiteral(":category"), operationLogQuery.category.has_value()
+            ? operationLogQuery.category->trimmed()
+            : QString());
+    query.bindValue(QStringLiteral(":pageSize"), operationLogQuery.pageSize);
+    query.bindValue(QStringLiteral(":offset"), (operationLogQuery.page - 1) * operationLogQuery.pageSize);
+    if (!query.exec()) {
+        throwSql(QStringLiteral("Failed to query operation log page"), query);
+    }
+
+    return {
+        readLogs(query),
+        countQuery.value(0).toLongLong(),
+        operationLogQuery.page,
+        operationLogQuery.pageSize
+    };
 }
 
 } // namespace Monitor::Infrastructure::Persistence

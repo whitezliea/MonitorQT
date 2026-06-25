@@ -1,8 +1,13 @@
 #include "application/ApplicationLayer.h"
+#include "application/abstractions/IRawFrameSource.h"
+#include "application/events/EventBus.h"
 #include "application/pipelines/DataCleanPipeline.h"
 #include "application/queues/BlockingQueue.h"
+#include "application/runtime/MonitoringRuntimeService.h"
 #include "application/runtime/PersistenceRuntimeCoordinator.h"
 #include "application/services/AlarmService.h"
+#include "application/services/OperationLogService.h"
+#include "application/services/RuntimeEventConsumers.h"
 #include "application/services/TagDefinitionCatalog.h"
 #include "application/services/UiSnapshotProvider.h"
 #include "application/workers/BatchPersistWorker.h"
@@ -37,7 +42,11 @@
 namespace {
 
 using Monitor::Application::Pipelines::DataCleanPipeline;
+using Monitor::Application::Runtime::MonitoringRuntimeService;
 using Monitor::Application::Services::AlarmService;
+using Monitor::Application::Services::AlarmEventConsumer;
+using Monitor::Application::Services::AlarmOperationLogConsumer;
+using Monitor::Application::Services::OperationLogService;
 using Monitor::Application::Services::TagDefinitionCatalog;
 using Monitor::Application::Workers::BatchPersistWorker;
 using Monitor::Application::Runtime::PersistenceRuntimeCoordinator;
@@ -70,6 +79,30 @@ public:
         : std::runtime_error(message.toStdString())
     {
     }
+};
+
+class NoopRawFrameSource final : public Monitor::Application::Abstractions::IRawFrameSource
+{
+public:
+    bool readNextFrame(
+        const QDateTime &,
+        Monitor::Domain::Measurements::RawMeasurementFrame *) override
+    {
+        return false;
+    }
+
+    void cancel() override
+    {
+        m_canceled = true;
+    }
+
+    void resetCancellation() override
+    {
+        m_canceled = false;
+    }
+
+private:
+    bool m_canceled = false;
 };
 
 void expect(bool condition, const QString &message)
@@ -218,14 +251,50 @@ void runAlarmLifecycleTests()
     const auto raised = service.evaluateWithChanges(
         {cleanedNumeric(QStringLiteral("MEAS.VIBRATION.CH01"), 3.0, first)},
         first);
-    const auto *raisedAlarm = findAlarm(service.currentAlarms(), QStringLiteral("MEAS.VIBRATION.CH01"));
+    const auto currentAfterRaise = service.currentAlarms();
+    const auto *raisedAlarm = findAlarm(currentAfterRaise, QStringLiteral("MEAS.VIBRATION.CH01"));
     expect(raisedAlarm, QStringLiteral("AlarmService must raise an active vibration alarm."));
     expect(raisedAlarm->level == AlarmLevel::Alarm, QStringLiteral("Vibration alarm high must be Alarm level."));
     expect(!raised.lifecycleChanges.isEmpty(), QStringLiteral("AlarmService must publish raise lifecycle change."));
 
+    Monitor::Application::Queues::AlarmEventQueue alarmEventQueue;
+    Monitor::Application::Queues::OperationLogQueue operationLogQueue;
+    OperationLogService operationLogService(&operationLogQueue);
+    AlarmEventConsumer alarmEventConsumer(&alarmEventQueue);
+    AlarmOperationLogConsumer alarmOperationLogConsumer(&operationLogService);
+    Monitor::Application::EventBus eventBus;
+    eventBus.registerHandler(
+        QStringLiteral("AlarmAcknowledgedEvent"),
+        QStringLiteral("AlarmEventConsumer"),
+        Monitor::Application::EventHandlerFailurePolicy::Isolated,
+        10,
+        [&alarmEventConsumer](const Monitor::Application::Events::ApplicationEvent &event) {
+            alarmEventConsumer.handle(event);
+        });
+    eventBus.registerHandler(
+        QStringLiteral("AlarmAcknowledgedEvent"),
+        QStringLiteral("AlarmOperationLogConsumer"),
+        Monitor::Application::EventHandlerFailurePolicy::Isolated,
+        20,
+        [&alarmOperationLogConsumer](const Monitor::Application::Events::ApplicationEvent &event) {
+            alarmOperationLogConsumer.handle(event);
+        });
+
+    NoopRawFrameSource source;
+    DataCleanPipeline pipeline(definitions, TagDefinitionCatalog::createSourceMappings());
+    MonitoringRuntimeService runtime(
+        &source,
+        &pipeline,
+        &service,
+        &eventBus,
+        Monitor::Application::Configuration::MonitorRuntimeOptions());
     AlarmEvent acknowledged;
-    expect(service.acknowledge(raisedAlarm->alarmId, first.addMSecs(100), &acknowledged), QStringLiteral("Active alarm must be acknowledgeable."));
+    QStringList acknowledgeErrors;
+    expect(runtime.acknowledgeAlarm(raisedAlarm->alarmId, first.addMSecs(100), &acknowledged, &acknowledgeErrors),
+           QStringLiteral("Active alarm must be acknowledgeable through MonitoringRuntimeService: %1").arg(acknowledgeErrors.join(QStringLiteral("; "))));
     expect(acknowledged.state == AlarmState::Acknowledged, QStringLiteral("Acknowledged alarm state must be persisted in service."));
+    expect(alarmEventQueue.size() == 1, QStringLiteral("Acknowledged alarm must be published to the alarm event queue."));
+    expect(operationLogQueue.size() == 1, QStringLiteral("Acknowledged alarm must be published to the operation log queue."));
 
     const auto recovered = service.evaluateWithChanges(
         {cleanedNumeric(QStringLiteral("MEAS.VIBRATION.CH01"), 0.5, first.addMSecs(200))},
@@ -343,9 +412,45 @@ void runSqliteRepositoryTests()
             QStringLiteral("detail"),
             QStringLiteral("corr"),
             0
+        },
+        Monitor::Domain::Logs::OperationLog{
+            now.addMSecs(1),
+            Monitor::Domain::Logs::OperationLogLevel::Warning,
+            QStringLiteral("Alarm"),
+            QStringLiteral("Alarm raised"),
+            QStringLiteral("Alarm.Raised"),
+            QStringLiteral("test"),
+            QStringLiteral("detail-2"),
+            QStringLiteral("corr-2"),
+            0
+        },
+        Monitor::Domain::Logs::OperationLog{
+            now.addMSecs(2),
+            Monitor::Domain::Logs::OperationLogLevel::Warning,
+            QStringLiteral("Alarm"),
+            QStringLiteral("Alarm acknowledged"),
+            QStringLiteral("Alarm.Acknowledged"),
+            QStringLiteral("test"),
+            QStringLiteral("detail-3"),
+            QStringLiteral("corr-3"),
+            0
         }
     });
     expect(logRepository.queryLatest(1).size() == 1, QStringLiteral("Operation log repository must persist latest log."));
+    const auto logPage = logRepository.queryPage(Monitor::Domain::Logs::OperationLogQuery{
+        now.addMSecs(-1),
+        now.addMSecs(5),
+        Monitor::Domain::Logs::OperationLogLevel::Warning,
+        QStringLiteral("alarm"),
+        20,
+        1,
+        1
+    });
+    expect(logPage.items.size() == 1, QStringLiteral("Operation log query page must honor page size."));
+    expect(logPage.totalCount == 2, QStringLiteral("Operation log query page must report total count."));
+    expect(logPage.hasNextPage(), QStringLiteral("Operation log query page must report next page."));
+    expect(logPage.items.first().action == QStringLiteral("Alarm.Acknowledged"),
+           QStringLiteral("Operation log query page must sort newest first."));
 
     configurationRepository.saveRuntimeSettings({{QStringLiteral("UiRefreshIntervalMs"), QStringLiteral("1000")}});
     expect(configurationRepository.loadRuntimeSettings().value(QStringLiteral("UiRefreshIntervalMs")) == QStringLiteral("1000"),

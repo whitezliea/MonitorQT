@@ -28,6 +28,11 @@ public:
     void run(std::atomic_bool &stopRequested);
     bool processFrame(const Monitor::Domain::Measurements::RawMeasurementFrame &frame, QStringList *errors = nullptr);
     bool publishOfflineStatesIfTimedOut(const QDateTime &nowUtc, QStringList *errors = nullptr);
+    bool acknowledgeAlarm(
+        const QUuid &alarmId,
+        const QDateTime &acknowledgedAtUtc,
+        Monitor::Domain::Alarms::AlarmEvent *acknowledgedAlarm = nullptr,
+        QStringList *errors = nullptr);
     DataSourceHealthMonitor &healthMonitor();
 
 private:

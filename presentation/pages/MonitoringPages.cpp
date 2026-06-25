@@ -681,9 +681,12 @@ DashboardPageWidget::DashboardPageWidget(QWidget *parent)
     m_alarmTable->setHorizontalHeaderLabels({tr("Tag"), tr("Level"), tr("State"), tr("Value"), tr("Message")});
     setupTable(m_alarmTable);
     m_previewMap = new HeatmapWidget(content);
+    m_trendPreview = new TrendChartWidget(content);
+    m_trendPreview->setMinimumHeight(180);
     middleLayout->addWidget(m_keyTagsTable, 0, 0, 2, 1);
     middleLayout->addWidget(m_alarmTable, 0, 1);
     middleLayout->addWidget(m_previewMap, 1, 1);
+    middleLayout->addWidget(m_trendPreview, 2, 0, 1, 2);
     layout->addLayout(middleLayout, 1);
     outerLayout->addWidget(scrollPage(content));
 }
@@ -695,6 +698,10 @@ void DashboardPageWidget::refresh(const UiSnapshot &snapshot)
     m_activeAlarmsLabel->setText(QString::number(snapshot.currentAlarms.size()));
     m_matrixLabel->setText(QString::number(snapshot.shell.matrixFrameIndex));
     m_previewMap->setSnapshot(snapshot.measurementMap);
+    const auto previewTagId = QStringLiteral("MEAS.TEMP.CH01");
+    m_trendPreview->setSeries(
+        trendPointsFor(snapshot, previewTagId, 120, TrendPointSource::RealtimeBuffer),
+        configurationFor(snapshot, previewTagId));
 
     const QStringList preferredTags = {
         QStringLiteral("MEAS.TEMP.CH01"),
@@ -926,13 +933,27 @@ AlarmCenterPageWidget::AlarmCenterPageWidget(QWidget *parent)
     m_historyFilterEdit = new QLineEdit(this);
     m_historyFilterEdit->setPlaceholderText(tr("Filter alarm history by tag or message"));
     layout->addWidget(m_historyFilterEdit);
+    auto *historyPager = new QGridLayout;
+    m_previousHistoryButton = new QPushButton(tr("Previous"), this);
+    m_nextHistoryButton = new QPushButton(tr("Next"), this);
+    m_historyPageLabel = new QLabel(this);
+    historyPager->addWidget(m_previousHistoryButton, 0, 0);
+    historyPager->addWidget(m_nextHistoryButton, 0, 1);
+    historyPager->addWidget(m_historyPageLabel, 0, 2);
+    historyPager->setColumnStretch(3, 1);
+    layout->addLayout(historyPager);
     m_historyTable = new QTableWidget(this);
     m_historyTable->setColumnCount(6);
     m_historyTable->setHorizontalHeaderLabels({tr("Time"), tr("Tag"), tr("Level"), tr("State"), tr("Value"), tr("Message")});
     setupTable(m_historyTable);
     layout->addWidget(m_historyTable, 1);
     connect(ackButton, &QPushButton::clicked, this, &AlarmCenterPageWidget::acknowledgeSelected);
-    connect(m_historyFilterEdit, &QLineEdit::textChanged, this, &AlarmCenterPageWidget::applyHistoryFilter);
+    connect(m_historyFilterEdit, &QLineEdit::textChanged, this, [this]() {
+        m_historyPage = 1;
+        applyHistoryFilter();
+    });
+    connect(m_previousHistoryButton, &QPushButton::clicked, this, &AlarmCenterPageWidget::previousHistoryPage);
+    connect(m_nextHistoryButton, &QPushButton::clicked, this, &AlarmCenterPageWidget::nextHistoryPage);
 }
 
 void AlarmCenterPageWidget::refresh(const UiSnapshot &snapshot)
@@ -962,6 +983,7 @@ void AlarmCenterPageWidget::acknowledgeSelected()
 
 void AlarmCenterPageWidget::applyHistoryFilter()
 {
+    constexpr auto PageSize = 100;
     const auto filter = m_historyFilterEdit->text().trimmed();
     QVector<AlarmEvent> alarms;
     for (const auto &alarm : m_snapshot.alarmHistory) {
@@ -970,9 +992,13 @@ void AlarmCenterPageWidget::applyHistoryFilter()
         }
         alarms.append(alarm);
     }
-    m_historyTable->setRowCount(limitedRowCount(alarms.size(), 100));
+    const auto totalPages = std::max(1, static_cast<int>(std::ceil(alarms.size() / static_cast<double>(PageSize))));
+    m_historyPage = std::clamp(m_historyPage, 1, totalPages);
+    const auto start = static_cast<qsizetype>((m_historyPage - 1) * PageSize);
+    const auto visibleRows = static_cast<int>(std::max<qsizetype>(0, std::min<qsizetype>(PageSize, alarms.size() - start)));
+    m_historyTable->setRowCount(visibleRows);
     for (auto row = 0; row < m_historyTable->rowCount(); ++row) {
-        const auto &alarm = alarms.at(row);
+        const auto &alarm = alarms.at(start + row);
         m_historyTable->setItem(row, 0, item(localTime(alarm.triggerTimeUtc)));
         m_historyTable->setItem(row, 1, item(alarm.tagId));
         m_historyTable->setItem(row, 2, item(Monitor::Domain::Alarms::toString(alarm.level)));
@@ -980,6 +1006,23 @@ void AlarmCenterPageWidget::applyHistoryFilter()
         m_historyTable->setItem(row, 4, numericItem(alarm.triggerValue));
         m_historyTable->setItem(row, 5, item(alarm.message));
     }
+    m_previousHistoryButton->setEnabled(m_historyPage > 1);
+    m_nextHistoryButton->setEnabled(m_historyPage < totalPages);
+    m_historyPageLabel->setText(tr("Page %1 / %2 (%3 alarms)").arg(m_historyPage).arg(totalPages).arg(alarms.size()));
+}
+
+void AlarmCenterPageWidget::previousHistoryPage()
+{
+    if (m_historyPage > 1) {
+        --m_historyPage;
+        applyHistoryFilter();
+    }
+}
+
+void AlarmCenterPageWidget::nextHistoryPage()
+{
+    ++m_historyPage;
+    applyHistoryFilter();
 }
 
 HistoryPageWidget::HistoryPageWidget(QWidget *parent)
@@ -991,19 +1034,39 @@ HistoryPageWidget::HistoryPageWidget(QWidget *parent)
     m_limitSpin = new QSpinBox(this);
     m_limitSpin->setRange(10, 1000);
     m_limitSpin->setValue(200);
+    m_previousButton = new QPushButton(tr("Previous"), this);
+    m_nextButton = new QPushButton(tr("Next"), this);
+    m_cancelButton = new QPushButton(tr("Cancel Query"), this);
+    m_pageLabel = new QLabel(this);
     auto *exportButton = new QPushButton(tr("Export CSV"), this);
     exportButton->setObjectName(QStringLiteral("secondaryButton"));
     controls->addWidget(m_tagCombo, 0, 0);
     controls->addWidget(m_limitSpin, 0, 1);
-    controls->addWidget(exportButton, 0, 2);
+    controls->addWidget(m_previousButton, 0, 2);
+    controls->addWidget(m_nextButton, 0, 3);
+    controls->addWidget(m_cancelButton, 0, 4);
+    controls->addWidget(exportButton, 0, 5);
+    controls->addWidget(m_pageLabel, 0, 6);
+    controls->setColumnStretch(7, 1);
     layout->addLayout(controls);
     m_table = new QTableWidget(this);
     m_table->setColumnCount(6);
     m_table->setHorizontalHeaderLabels({tr("Time"), tr("Tag"), tr("Value"), tr("Quality"), tr("Alarm"), tr("Source")});
     setupTable(m_table);
     layout->addWidget(m_table, 1);
-    connect(m_tagCombo, &QComboBox::currentTextChanged, this, &HistoryPageWidget::applyQuery);
-    connect(m_limitSpin, qOverload<int>(&QSpinBox::valueChanged), this, &HistoryPageWidget::applyQuery);
+    connect(m_tagCombo, &QComboBox::currentTextChanged, this, [this]() {
+        m_currentPage = 1;
+        m_queryCanceled = false;
+        applyQuery();
+    });
+    connect(m_limitSpin, qOverload<int>(&QSpinBox::valueChanged), this, [this]() {
+        m_currentPage = 1;
+        m_queryCanceled = false;
+        applyQuery();
+    });
+    connect(m_previousButton, &QPushButton::clicked, this, &HistoryPageWidget::previousPage);
+    connect(m_nextButton, &QPushButton::clicked, this, &HistoryPageWidget::nextPage);
+    connect(m_cancelButton, &QPushButton::clicked, this, &HistoryPageWidget::cancelQuery);
     connect(exportButton, &QPushButton::clicked, this, &HistoryPageWidget::exportCurrentRows);
 }
 
@@ -1029,10 +1092,31 @@ void HistoryPageWidget::rebuildTagList(const UiSnapshot &snapshot)
 
 void HistoryPageWidget::applyQuery()
 {
-    const auto samples = filteredSamples(m_snapshot, m_tagCombo->currentData().toString(), m_limitSpin->value());
-    m_table->setRowCount(samples.size());
-    for (auto row = 0; row < samples.size(); ++row) {
-        const auto &sample = samples.at(row);
+    if (m_queryCanceled) {
+        m_table->setRowCount(0);
+        m_previousButton->setEnabled(false);
+        m_nextButton->setEnabled(false);
+        m_pageLabel->setText(tr("Query canceled"));
+        return;
+    }
+
+    QVector<TagValue> samples;
+    const auto tagId = m_tagCombo->currentData().toString();
+    for (auto it = m_snapshot.historySamples.crbegin(); it != m_snapshot.historySamples.crend(); ++it) {
+        if (!tagId.isEmpty() && it->tagId != tagId) {
+            continue;
+        }
+        samples.append(*it);
+    }
+
+    const auto pageSize = m_limitSpin->value();
+    const auto totalPages = std::max(1, static_cast<int>(std::ceil(samples.size() / static_cast<double>(pageSize))));
+    m_currentPage = std::clamp(m_currentPage, 1, totalPages);
+    const auto start = static_cast<qsizetype>((m_currentPage - 1) * pageSize);
+    const auto visibleRows = static_cast<int>(std::max<qsizetype>(0, std::min<qsizetype>(pageSize, samples.size() - start)));
+    m_table->setRowCount(visibleRows);
+    for (auto row = 0; row < visibleRows; ++row) {
+        const auto &sample = samples.at(start + row);
         m_table->setItem(row, 0, item(localTime(sample.timestampUtc)));
         m_table->setItem(row, 1, item(sample.tagId));
         m_table->setItem(row, 2, item(sampleValueText(sample)));
@@ -1040,6 +1124,31 @@ void HistoryPageWidget::applyQuery()
         m_table->setItem(row, 4, item(Monitor::Domain::Tags::toString(sample.alarmState)));
         m_table->setItem(row, 5, item(sample.source));
     }
+    m_previousButton->setEnabled(m_currentPage > 1);
+    m_nextButton->setEnabled(m_currentPage < totalPages);
+    m_pageLabel->setText(tr("Page %1 / %2 (%3 samples)").arg(m_currentPage).arg(totalPages).arg(samples.size()));
+}
+
+void HistoryPageWidget::previousPage()
+{
+    if (m_currentPage > 1) {
+        --m_currentPage;
+        m_queryCanceled = false;
+        applyQuery();
+    }
+}
+
+void HistoryPageWidget::nextPage()
+{
+    ++m_currentPage;
+    m_queryCanceled = false;
+    applyQuery();
+}
+
+void HistoryPageWidget::cancelQuery()
+{
+    m_queryCanceled = true;
+    applyQuery();
 }
 
 void HistoryPageWidget::exportCurrentRows()
@@ -1276,6 +1385,24 @@ LogsSettingsPageWidget::LogsSettingsPageWidget(QWidget *parent)
     settingsLayout->addWidget(saveOptionsButton, 0, 6);
     layout->addLayout(settingsLayout);
 
+    auto *logFilterLayout = new QGridLayout;
+    m_logLevelCombo = new QComboBox(this);
+    m_logLevelCombo->addItem(tr("All Levels"), -1);
+    m_logLevelCombo->addItem(QStringLiteral("Debug"), static_cast<int>(Monitor::Domain::Logs::OperationLogLevel::Debug));
+    m_logLevelCombo->addItem(QStringLiteral("Info"), static_cast<int>(Monitor::Domain::Logs::OperationLogLevel::Info));
+    m_logLevelCombo->addItem(QStringLiteral("Warning"), static_cast<int>(Monitor::Domain::Logs::OperationLogLevel::Warning));
+    m_logLevelCombo->addItem(QStringLiteral("Error"), static_cast<int>(Monitor::Domain::Logs::OperationLogLevel::Error));
+    m_logCategoryEdit = new QLineEdit(this);
+    m_logCategoryEdit->setPlaceholderText(tr("Filter log category or action"));
+    m_logLimitSpin = new QSpinBox(this);
+    m_logLimitSpin->setRange(10, 1000);
+    m_logLimitSpin->setValue(100);
+    logFilterLayout->addWidget(m_logLevelCombo, 0, 0);
+    logFilterLayout->addWidget(m_logCategoryEdit, 0, 1);
+    logFilterLayout->addWidget(m_logLimitSpin, 0, 2);
+    logFilterLayout->setColumnStretch(3, 1);
+    layout->addLayout(logFilterLayout);
+
     m_logTable = new QTableWidget(this);
     m_logTable->setColumnCount(6);
     m_logTable->setHorizontalHeaderLabels({tr("Time"), tr("Level"), tr("Category"), tr("Action"), tr("Message"), tr("Detail")});
@@ -1290,6 +1417,9 @@ LogsSettingsPageWidget::LogsSettingsPageWidget(QWidget *parent)
     m_configurationTable->setHorizontalHeaderLabels({tr("Tag"), tr("Alarm"), tr("Warn Low"), tr("Alarm Low"), tr("Warn High"), tr("Alarm High"), tr("Historized"), tr("Interval ms")});
     setupTable(m_configurationTable);
     layout->addWidget(m_configurationTable, 1);
+    connect(m_logLevelCombo, &QComboBox::currentTextChanged, this, &LogsSettingsPageWidget::applyLogFilter);
+    connect(m_logCategoryEdit, &QLineEdit::textChanged, this, &LogsSettingsPageWidget::applyLogFilter);
+    connect(m_logLimitSpin, qOverload<int>(&QSpinBox::valueChanged), this, &LogsSettingsPageWidget::applyLogFilter);
     connect(saveOptionsButton, &QPushButton::clicked, this, &LogsSettingsPageWidget::saveRuntimeOptions);
     connect(saveTagButton, &QPushButton::clicked, this, &LogsSettingsPageWidget::saveTagConfigurations);
 }
@@ -1308,19 +1438,47 @@ void LogsSettingsPageWidget::refresh(const UiSnapshot &snapshot)
         m_historyRetentionSpin->setValue(snapshot.runtimeOptions.historyRetentionDays);
     }
 
-    m_logTable->setRowCount(limitedRowCount(snapshot.operationLogs.size(), 100));
-    for (auto row = 0; row < m_logTable->rowCount(); ++row) {
-        const auto &log = snapshot.operationLogs.at(row);
+    applyLogFilter();
+
+    if (previousConfigurationCount != snapshot.tagConfigurations.size() || m_configurationTable->rowCount() == 0) {
+        populateConfigurationRows();
+    }
+}
+
+void LogsSettingsPageWidget::applyLogFilter()
+{
+    if (!m_logTable || !m_logLevelCombo || !m_logCategoryEdit || !m_logLimitSpin) {
+        return;
+    }
+
+    const auto levelFilter = m_logLevelCombo->currentData().toInt();
+    const auto textFilter = m_logCategoryEdit->text().trimmed();
+    QVector<Monitor::Domain::Logs::OperationLog> rows;
+    rows.reserve(m_snapshot.operationLogs.size());
+    for (const auto &log : m_snapshot.operationLogs) {
+        if (levelFilter >= 0 && static_cast<int>(log.level) != levelFilter) {
+            continue;
+        }
+        if (!textFilter.isEmpty() &&
+            !log.category.contains(textFilter, Qt::CaseInsensitive) &&
+            !log.action.contains(textFilter, Qt::CaseInsensitive)) {
+            continue;
+        }
+        rows.append(log);
+        if (rows.size() >= m_logLimitSpin->value()) {
+            break;
+        }
+    }
+
+    m_logTable->setRowCount(rows.size());
+    for (auto row = 0; row < rows.size(); ++row) {
+        const auto &log = rows.at(row);
         m_logTable->setItem(row, 0, item(localTime(log.timestampUtc)));
         m_logTable->setItem(row, 1, item(Monitor::Domain::Logs::toString(log.level)));
         m_logTable->setItem(row, 2, item(log.category));
         m_logTable->setItem(row, 3, item(log.action));
         m_logTable->setItem(row, 4, item(log.message));
         m_logTable->setItem(row, 5, item(optionalText(log.detail)));
-    }
-
-    if (previousConfigurationCount != snapshot.tagConfigurations.size() || m_configurationTable->rowCount() == 0) {
-        populateConfigurationRows();
     }
 }
 

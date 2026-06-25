@@ -75,6 +75,7 @@ private:
     QTableWidget *m_keyTagsTable = nullptr;
     QTableWidget *m_alarmTable = nullptr;
     HeatmapWidget *m_previewMap = nullptr;
+    TrendChartWidget *m_trendPreview = nullptr;
 };
 
 class RealtimeTagsPageWidget : public QWidget
@@ -130,11 +131,17 @@ signals:
 private:
     void acknowledgeSelected();
     void applyHistoryFilter();
+    void previousHistoryPage();
+    void nextHistoryPage();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
     QTableWidget *m_currentTable = nullptr;
     QLineEdit *m_historyFilterEdit = nullptr;
+    QLabel *m_historyPageLabel = nullptr;
+    QPushButton *m_previousHistoryButton = nullptr;
+    QPushButton *m_nextHistoryButton = nullptr;
     QTableWidget *m_historyTable = nullptr;
+    int m_historyPage = 1;
 };
 
 class HistoryPageWidget : public QWidget
@@ -148,12 +155,21 @@ public:
 private:
     void rebuildTagList(const Monitor::Application::Dtos::UiSnapshot &snapshot);
     void applyQuery();
+    void previousPage();
+    void nextPage();
+    void cancelQuery();
     void exportCurrentRows();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
     QComboBox *m_tagCombo = nullptr;
     QSpinBox *m_limitSpin = nullptr;
+    QLabel *m_pageLabel = nullptr;
+    QPushButton *m_previousButton = nullptr;
+    QPushButton *m_nextButton = nullptr;
+    QPushButton *m_cancelButton = nullptr;
     QTableWidget *m_table = nullptr;
+    int m_currentPage = 1;
+    bool m_queryCanceled = false;
 };
 
 class MeasurementMapPageWidget : public QWidget
@@ -195,12 +211,16 @@ signals:
         const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations);
 
 private:
+    void applyLogFilter();
     void saveRuntimeOptions();
     void saveTagConfigurations();
     void populateConfigurationRows();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
     QTableWidget *m_logTable = nullptr;
+    QComboBox *m_logLevelCombo = nullptr;
+    QLineEdit *m_logCategoryEdit = nullptr;
+    QSpinBox *m_logLimitSpin = nullptr;
     QSpinBox *m_generateIntervalSpin = nullptr;
     QSpinBox *m_refreshIntervalSpin = nullptr;
     QSpinBox *m_historyRetentionSpin = nullptr;

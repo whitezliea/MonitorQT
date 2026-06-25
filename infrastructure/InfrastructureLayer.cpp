@@ -256,11 +256,22 @@ QStringList validateInfrastructureLayer()
                 QStringLiteral("alarm"),
                 20
             });
+            const auto warningLogPage = operationLogRepository.queryPage(Monitor::Domain::Logs::OperationLogQuery{
+                now.addSecs(-1),
+                now.addSecs(2),
+                Monitor::Domain::Logs::OperationLogLevel::Warning,
+                QStringLiteral("alarm"),
+                20,
+                1,
+                1
+            });
             if (warningLogs.size() != 1 ||
+                warningLogPage.items.size() != 1 ||
+                warningLogPage.totalCount != 1 ||
                 warningLogs.first().id <= 0 ||
                 warningLogs.first().action != QStringLiteral("Alarm.Acknowledged") ||
                 !warningLogs.first().correlationId.has_value()) {
-                addError(&errors, QStringLiteral("SQLiteOperationLogRepository must persist and filter logs across categories."));
+                addError(&errors, QStringLiteral("SQLiteOperationLogRepository must persist and page filtered logs across categories."));
             }
 
             configurationRepository.saveTagConfigurations({

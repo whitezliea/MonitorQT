@@ -17,6 +17,8 @@ public:
     QVector<Monitor::Domain::Logs::OperationLog> queryLatest(int count);
     QVector<Monitor::Domain::Logs::OperationLog> query(
         const Monitor::Domain::Logs::OperationLogQuery &query);
+    Monitor::Domain::Logs::OperationLogQueryResult queryPage(
+        const Monitor::Domain::Logs::OperationLogQuery &query);
 
 private:
     SqliteConnectionFactory *m_connectionFactory = nullptr;

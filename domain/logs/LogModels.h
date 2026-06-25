@@ -3,6 +3,7 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QVector>
 
 #include <optional>
 
@@ -51,6 +52,19 @@ struct OperationLogQuery
     std::optional<OperationLogLevel> level;
     std::optional<QString> category;
     int maxCount = 200;
+    int page = 1;
+    int pageSize = 200;
+};
+
+struct OperationLogQueryResult
+{
+    QVector<OperationLog> items;
+    qint64 totalCount = 0;
+    int page = 1;
+    int pageSize = 200;
+
+    bool hasPreviousPage() const { return page > 1; }
+    bool hasNextPage() const { return static_cast<qint64>(page) * pageSize < totalCount; }
 };
 
 QString toString(OperationLogLevel level);
