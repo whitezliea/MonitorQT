@@ -15,6 +15,7 @@ struct InfrastructureLayerInfo
 };
 
 InfrastructureLayerInfo infrastructureLayerInfo();
+QStringList validateInfrastructureLayer();
 
 } // namespace Monitor::Infrastructure
 

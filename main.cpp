@@ -1,10 +1,14 @@
 #include "bootstrap/RuntimeComposition.h"
+#include "infrastructure/persistence/SqliteConnectionFactory.h"
 #include "mainwindow.h"
 
 #include <QApplication>
 #include <QDebug>
+#include <QFileInfo>
 #include <QLocale>
 #include <QTranslator>
+
+#include <exception>
 
 int main(int argc, char *argv[])
 {
@@ -18,6 +22,25 @@ int main(int argc, char *argv[])
             a.installTranslator(&translator);
             break;
         }
+    }
+
+    try {
+        Monitor::Infrastructure::Persistence::SqliteConnectionFactory startupSqlite;
+        startupSqlite.initialize();
+        if (!QFileInfo::exists(startupSqlite.databasePath())) {
+            qCritical().noquote() << "SQLite startup initialization failed: database file was not created at"
+                                  << startupSqlite.databasePath();
+            return 3;
+        }
+        if (startupSqlite.schemaVersion() !=
+            Monitor::Infrastructure::Persistence::SqliteConnectionFactory::currentSchemaVersion()) {
+            qCritical().noquote() << "SQLite startup initialization failed: schema version is not current.";
+            return 3;
+        }
+    } catch (const std::exception &exception) {
+        qCritical().noquote() << "SQLite startup initialization failed:"
+                              << QString::fromUtf8(exception.what());
+        return 3;
     }
 
     Monitor::Bootstrap::RuntimeComposition runtimeComposition;

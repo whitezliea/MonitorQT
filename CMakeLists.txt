@@ -109,6 +109,22 @@ set(APPLICATION_SOURCES
 set(INFRASTRUCTURE_SOURCES
     infrastructure/InfrastructureLayer.cpp
     infrastructure/InfrastructureLayer.h
+    infrastructure/persistence/HistoryRetentionService.cpp
+    infrastructure/persistence/HistoryRetentionService.h
+    infrastructure/persistence/PersistenceModels.cpp
+    infrastructure/persistence/PersistenceModels.h
+    infrastructure/persistence/SQLiteAlarmRepository.cpp
+    infrastructure/persistence/SQLiteAlarmRepository.h
+    infrastructure/persistence/SQLiteConfigurationRepository.cpp
+    infrastructure/persistence/SQLiteConfigurationRepository.h
+    infrastructure/persistence/SQLiteHistoryRepository.cpp
+    infrastructure/persistence/SQLiteHistoryRepository.h
+    infrastructure/persistence/SQLiteOperationLogRepository.cpp
+    infrastructure/persistence/SQLiteOperationLogRepository.h
+    infrastructure/persistence/SqliteConnectionFactory.cpp
+    infrastructure/persistence/SqliteConnectionFactory.h
+    infrastructure/persistence/SqliteSchemaMigrations.cpp
+    infrastructure/persistence/SqliteSchemaMigrations.h
 )
 
 set(SIMULATOR_SOURCES
