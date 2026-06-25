@@ -153,6 +153,7 @@ QTableWidgetItem *item(const QString &text)
 {
     auto *tableItem = new QTableWidgetItem(text);
     tableItem->setFlags(tableItem->flags() & ~Qt::ItemIsEditable);
+    tableItem->setForeground(QColor(QStringLiteral("#1E293B")));
     return tableItem;
 }
 

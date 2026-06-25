@@ -200,6 +200,10 @@ void MainWindow::applyApplicationStyle()
             font-size: 13px;
         }
 
+        QLabel {
+            color: #172033;
+        }
+
         QWidget#topStatusBar {
             background: #FFFFFF;
             border-bottom: 1px solid #D9E2EA;
@@ -304,6 +308,10 @@ void MainWindow::applyApplicationStyle()
             color: #475569;
         }
 
+        QWidget#bottomStatusBar QLabel {
+            color: #475569;
+        }
+
         QFrame#summaryCard {
             background: #F8FAFC;
             border: 1px solid #D9E2EA;
@@ -323,12 +331,35 @@ void MainWindow::applyApplicationStyle()
         }
 
         QTableWidget {
-            background: #FFFFFF;
-            alternate-background-color: #F8FAFC;
+            background: #FBFCFE;
+            alternate-background-color: #F1F5F9;
             border: 1px solid #D9E2EA;
+            color: #1E293B;
             gridline-color: #E2E8F0;
-            selection-background-color: #DDEAF3;
+            selection-background-color: #CFE3F0;
             selection-color: #0F172A;
+        }
+
+        QTableWidget:disabled {
+            background: #FBFCFE;
+            color: #334155;
+        }
+
+        QTableWidget::item {
+            color: #1E293B;
+        }
+
+        QTableWidget::item:alternate {
+            background: #F1F5F9;
+        }
+
+        QTableWidget::item:selected {
+            background: #CFE3F0;
+            color: #0F172A;
+        }
+
+        QTableWidget::item:disabled {
+            color: #334155;
         }
 
         QHeaderView::section {
@@ -347,6 +378,36 @@ void MainWindow::applyApplicationStyle()
             border-radius: 6px;
             padding: 4px 8px;
             background: #FFFFFF;
+            color: #1E293B;
+            selection-background-color: #CFE3F0;
+            selection-color: #0F172A;
+        }
+
+        QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+            background: #F8FAFC;
+            color: #475569;
+        }
+
+        QComboBox QAbstractItemView {
+            background: #FFFFFF;
+            color: #1E293B;
+            border: 1px solid #CBD5E1;
+            outline: 0;
+            selection-background-color: #CFE3F0;
+            selection-color: #0F172A;
+        }
+
+        QComboBox QAbstractItemView::item {
+            min-height: 28px;
+            padding: 6px 8px;
+            color: #1E293B;
+            background: #FFFFFF;
+        }
+
+        QComboBox QAbstractItemView::item:hover,
+        QComboBox QAbstractItemView::item:selected {
+            background: #CFE3F0;
+            color: #0F172A;
         }
     )"));
 }
