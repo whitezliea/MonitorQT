@@ -15,6 +15,7 @@ struct SimulatorLayerInfo
 };
 
 SimulatorLayerInfo simulatorLayerInfo();
+QStringList validateSimulatorLayer();
 
 } // namespace Monitor::Simulator
 

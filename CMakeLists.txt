@@ -73,6 +73,26 @@ set(INFRASTRUCTURE_SOURCES
 )
 
 set(SIMULATOR_SOURCES
+    simulator/adapters/SimulatorDataSource.cpp
+    simulator/adapters/SimulatorDataSource.h
+    simulator/generators/ChannelValueGenerator.cpp
+    simulator/generators/ChannelValueGenerator.h
+    simulator/generators/DeviceStatusGenerator.cpp
+    simulator/generators/DeviceStatusGenerator.h
+    simulator/generators/FakeDataGenerator.cpp
+    simulator/generators/FakeDataGenerator.h
+    simulator/generators/MatrixValueGenerator.cpp
+    simulator/generators/MatrixValueGenerator.h
+    simulator/models/SimulationModels.cpp
+    simulator/models/SimulationModels.h
+    simulator/noise/NoiseModels.cpp
+    simulator/noise/NoiseModels.h
+    simulator/profiles/DefaultInstrumentProfile.cpp
+    simulator/profiles/DefaultInstrumentProfile.h
+    simulator/profiles/SimulationProfile.cpp
+    simulator/profiles/SimulationProfile.h
+    simulator/scenarios/SimulationScenario.cpp
+    simulator/scenarios/SimulationScenario.h
     simulator/SimulatorLayer.cpp
     simulator/SimulatorLayer.h
 )

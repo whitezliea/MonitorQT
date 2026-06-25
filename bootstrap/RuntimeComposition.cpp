@@ -65,6 +65,7 @@ bool RuntimeComposition::initialize(QStringList *errors)
 
     appendErrors(errors, Monitor::Domain::validateDomainLayer());
     appendErrors(errors, Monitor::Application::validateApplicationLayer());
+    appendErrors(errors, Monitor::Simulator::validateSimulatorLayer());
 
     appendErrors(errors, m_dependencies.validate());
 
