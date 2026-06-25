@@ -40,6 +40,7 @@ class HeatmapWidget : public QWidget
 public:
     explicit HeatmapWidget(QWidget *parent = nullptr);
     void setSnapshot(const std::optional<Monitor::Application::Dtos::MeasurementMapSnapshot> &snapshot);
+    void setRenderRange(const std::optional<Monitor::Application::Dtos::ScaleRange> &range);
 
 signals:
     void cellSelected(int row, int column, double value);
@@ -53,6 +54,7 @@ private:
     std::optional<Monitor::Application::Dtos::HeatmapCell> cellAtPosition(const QPoint &position) const;
 
     std::optional<Monitor::Application::Dtos::MeasurementMapSnapshot> m_snapshot;
+    std::optional<Monitor::Application::Dtos::ScaleRange> m_renderRange;
     int m_selectedRow = -1;
     int m_selectedColumn = -1;
 };
@@ -103,10 +105,12 @@ public:
 private:
     void rebuildTagList(const Monitor::Application::Dtos::UiSnapshot &snapshot);
     void updateChart();
+    void exportTrendRows();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
     QComboBox *m_tagCombo = nullptr;
     QComboBox *m_windowCombo = nullptr;
+    QComboBox *m_sourceCombo = nullptr;
     QLabel *m_summaryLabel = nullptr;
     TrendChartWidget *m_chart = nullptr;
     QTableWidget *m_pointsTable = nullptr;
@@ -161,9 +165,17 @@ public:
     void refresh(const Monitor::Application::Dtos::UiSnapshot &snapshot);
 
 private:
+    void updateHeatmapRenderOptions();
+    void exportMatrixCsv();
+
+    Monitor::Application::Dtos::UiSnapshot m_snapshot;
     QLabel *m_qualityLabel = nullptr;
     QLabel *m_rangeLabel = nullptr;
     QLabel *m_cellLabel = nullptr;
+    QLabel *m_hotspotLabel = nullptr;
+    QComboBox *m_scaleModeCombo = nullptr;
+    QDoubleSpinBox *m_fixedMinSpin = nullptr;
+    QDoubleSpinBox *m_fixedMaxSpin = nullptr;
     HeatmapWidget *m_heatmap = nullptr;
     QTableWidget *m_statsTable = nullptr;
     QTableWidget *m_abnormalTable = nullptr;

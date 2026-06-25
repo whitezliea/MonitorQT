@@ -164,6 +164,8 @@ set(PRESENTATION_SOURCES
     pages/PagePlaceholderWidget.h
     presentation/PresentationLayer.cpp
     presentation/PresentationLayer.h
+    presentation/export/CsvExportWriter.cpp
+    presentation/export/CsvExportWriter.h
     presentation/pages/MonitoringPages.cpp
     presentation/pages/MonitoringPages.h
     shell/BottomStatusBarWidget.cpp

@@ -1,12 +1,13 @@
 #include "MonitoringPages.h"
 
+#include "presentation/export/CsvExportWriter.h"
+
 #include "domain/alarms/AlarmModels.h"
 #include "domain/logs/LogModels.h"
 
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateTime>
-#include <QFile>
 #include <QFileDialog>
 #include <QFrame>
 #include <QGridLayout>
@@ -19,13 +20,14 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QTableWidget>
-#include <QTextStream>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 
@@ -36,6 +38,11 @@ using Monitor::Application::Configuration::TagRuntimeConfiguration;
 using Monitor::Domain::Alarms::AlarmEvent;
 using Monitor::Domain::Tags::TagRuntimeState;
 using Monitor::Domain::Tags::TagValue;
+
+enum class TrendPointSource {
+    RealtimeBuffer,
+    HistorySamples
+};
 
 QString localTime(const QDateTime &timestampUtc)
 {
@@ -63,6 +70,64 @@ QString valueText(const TagRuntimeState &state)
 QString sampleValueText(const TagValue &sample)
 {
     return QString::number(sample.value, 'f', 3);
+}
+
+QString qualityStateText(Monitor::Application::Dtos::MatrixQualityState state)
+{
+    using Monitor::Application::Dtos::MatrixQualityState;
+
+    switch (state) {
+    case MatrixQualityState::Good:
+        return QStringLiteral("Good");
+    case MatrixQualityState::Attention:
+        return QStringLiteral("Attention");
+    case MatrixQualityState::Warning:
+        return QStringLiteral("Warning");
+    case MatrixQualityState::Alarm:
+        return QStringLiteral("Alarm");
+    }
+
+    return QStringLiteral("Unknown");
+}
+
+QString matrixSeverityText(Monitor::Application::Dtos::MatrixSeverity severity)
+{
+    using Monitor::Application::Dtos::MatrixSeverity;
+
+    switch (severity) {
+    case MatrixSeverity::Info:
+        return QStringLiteral("Info");
+    case MatrixSeverity::Warning:
+        return QStringLiteral("Warning");
+    case MatrixSeverity::Alarm:
+        return QStringLiteral("Alarm");
+    }
+
+    return QStringLiteral("Unknown");
+}
+
+QString abnormalTypeText(Monitor::Application::Dtos::MatrixAbnormalType type)
+{
+    using Monitor::Application::Dtos::MatrixAbnormalType;
+
+    switch (type) {
+    case MatrixAbnormalType::InvalidValue:
+        return QStringLiteral("InvalidValue");
+    case MatrixAbnormalType::HighLimit:
+        return QStringLiteral("HighLimit");
+    case MatrixAbnormalType::LowLimit:
+        return QStringLiteral("LowLimit");
+    case MatrixAbnormalType::StatisticalHotspot:
+        return QStringLiteral("StatisticalHotspot");
+    case MatrixAbnormalType::StatisticalColdspot:
+        return QStringLiteral("StatisticalColdspot");
+    case MatrixAbnormalType::LocalHotspot:
+        return QStringLiteral("LocalHotspot");
+    case MatrixAbnormalType::LocalColdspot:
+        return QStringLiteral("LocalColdspot");
+    }
+
+    return QStringLiteral("Unknown");
 }
 
 QString displayNameFor(const UiSnapshot &snapshot, const QString &tagId)
@@ -137,6 +202,66 @@ int spikeCount(const QVector<TrendPointDto> &points)
     }));
 }
 
+double normalizedValue(double value, const Monitor::Application::Dtos::ScaleRange &range)
+{
+    if (!std::isfinite(value) || !std::isfinite(range.minValue) || !std::isfinite(range.maxValue)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    if (std::abs(range.range()) < 0.000001) {
+        return 0.5;
+    }
+
+    return std::clamp((value - range.minValue) / range.range(), 0.0, 1.0);
+}
+
+QColor heatColorFor(double normalized)
+{
+    if (!std::isfinite(normalized)) {
+        return QColor(96, 96, 96);
+    }
+
+    const auto clamped = std::clamp(normalized, 0.0, 1.0);
+    if (clamped < 0.25) {
+        const auto t = clamped / 0.25;
+        return QColor(
+            static_cast<int>(18 + 28 * t),
+            static_cast<int>(38 + 48 * t),
+            static_cast<int>(79 + 54 * t));
+    }
+
+    if (clamped < 0.50) {
+        const auto t = (clamped - 0.25) / 0.25;
+        return QColor(
+            static_cast<int>(46 + 14 * t),
+            static_cast<int>(86 + 118 * t),
+            static_cast<int>(133 - 42 * t));
+    }
+
+    if (clamped < 0.75) {
+        const auto t = (clamped - 0.50) / 0.25;
+        return QColor(
+            static_cast<int>(60 + 185 * t),
+            static_cast<int>(204 - 76 * t),
+            static_cast<int>(91 - 48 * t));
+    }
+
+    const auto t = (clamped - 0.75) / 0.25;
+    return QColor(
+        static_cast<int>(245 + 10 * t),
+        static_cast<int>(128 + 82 * t),
+        static_cast<int>(43 + 99 * t));
+}
+
+QColor heatColorFor(const Monitor::Application::Dtos::HeatmapCell &cell, const std::optional<Monitor::Application::Dtos::ScaleRange> &range)
+{
+    if (range.has_value()) {
+        return heatColorFor(normalizedValue(cell.value, range.value()));
+    }
+
+    return QColor(cell.color.r, cell.color.g, cell.color.b);
+}
+
 QTableWidgetItem *numericItem(double value, int decimals = 2)
 {
     auto *tableItem = item(QString::number(value, 'f', decimals));
@@ -179,13 +304,6 @@ QScrollArea *scrollPage(QWidget *content)
     return scroll;
 }
 
-QString csvEscape(const QString &value)
-{
-    auto escaped = value;
-    escaped.replace(QStringLiteral("\""), QStringLiteral("\"\""));
-    return QStringLiteral("\"%1\"").arg(escaped);
-}
-
 QVector<TagValue> filteredSamples(const UiSnapshot &snapshot, const QString &tagId, int limit)
 {
     QVector<TagValue> result;
@@ -201,9 +319,40 @@ QVector<TagValue> filteredSamples(const UiSnapshot &snapshot, const QString &tag
     return result;
 }
 
-QVector<TrendPointDto> trendPointsFor(const UiSnapshot &snapshot, const QString &tagId, int maxPoints)
+void markSpikePoints(QVector<TrendPointDto> *points)
+{
+    if (!points || points->size() < 3) {
+        return;
+    }
+
+    double totalDelta = 0.0;
+    for (auto index = 1; index < points->size(); ++index) {
+        totalDelta += std::abs(points->at(index).value - points->at(index - 1).value);
+    }
+    const auto averageDelta = totalDelta / static_cast<double>(points->size() - 1);
+    const auto spikeThreshold = std::max(averageDelta * 3.0, 0.1);
+    for (auto index = 1; index < points->size(); ++index) {
+        (*points)[index].isSpike = std::abs(points->at(index).value - points->at(index - 1).value) > spikeThreshold;
+    }
+}
+
+QVector<TrendPointDto> trendPointsFor(
+    const UiSnapshot &snapshot,
+    const QString &tagId,
+    int maxPoints,
+    TrendPointSource source)
 {
     QVector<TrendPointDto> result;
+    if (source == TrendPointSource::HistorySamples) {
+        const auto samples = filteredSamples(snapshot, tagId, maxPoints);
+        result.reserve(samples.size());
+        for (auto it = samples.crbegin(); it != samples.crend(); ++it) {
+            result.append(TrendPointDto{it->timestampUtc, it->value, it->quality, false});
+        }
+        markSpikePoints(&result);
+        return result;
+    }
+
     const auto bufferIt = snapshot.tags.recentBuffers.constFind(tagId);
     if (bufferIt == snapshot.tags.recentBuffers.cend()) {
         return result;
@@ -213,19 +362,40 @@ QVector<TrendPointDto> trendPointsFor(const UiSnapshot &snapshot, const QString 
         const auto &point = bufferIt.value().at(index);
         result.append(TrendPointDto{point.timestampUtc, point.value, point.quality, false});
     }
+    markSpikePoints(&result);
+    return result;
+}
 
-    if (result.size() >= 3) {
-        double totalDelta = 0.0;
-        for (auto index = 1; index < result.size(); ++index) {
-            totalDelta += std::abs(result.at(index).value - result.at(index - 1).value);
-        }
-        const auto averageDelta = totalDelta / static_cast<double>(result.size() - 1);
-        const auto spikeThreshold = std::max(averageDelta * 3.0, 0.1);
-        for (auto index = 1; index < result.size(); ++index) {
-            result[index].isSpike = std::abs(result.at(index).value - result.at(index - 1).value) > spikeThreshold;
+QString hotspotText(const MeasurementMapSnapshot &map)
+{
+    if (!map.abnormalPoints.isEmpty()) {
+        const auto best = std::max_element(map.abnormalPoints.cbegin(), map.abnormalPoints.cend(), [](const auto &left, const auto &right) {
+            if (left.severity != right.severity) {
+                return static_cast<int>(left.severity) < static_cast<int>(right.severity);
+            }
+            return left.value < right.value;
+        });
+        if (best != map.abnormalPoints.cend()) {
+            return QStringLiteral("Hotspot: [%1, %2] %3 %4 (%5)")
+                .arg(best->row)
+                .arg(best->column)
+                .arg(best->value, 0, 'f', 2)
+                .arg(map.unit, abnormalTypeText(best->type));
         }
     }
-    return result;
+
+    const auto bestCell = std::max_element(map.cells.cbegin(), map.cells.cend(), [](const auto &left, const auto &right) {
+        return left.value < right.value;
+    });
+    if (bestCell == map.cells.cend()) {
+        return QStringLiteral("Hotspot: -");
+    }
+
+    return QStringLiteral("Hotspot: [%1, %2] %3 %4")
+        .arg(bestCell->row)
+        .arg(bestCell->column)
+        .arg(bestCell->value, 0, 'f', 2)
+        .arg(map.unit);
 }
 
 } // namespace
@@ -331,6 +501,14 @@ void TrendChartWidget::paintEvent(QPaintEvent *)
     painter.setPen(QPen(QColor(QStringLiteral("#256D85")), 2));
     painter.drawPath(path);
     painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(QStringLiteral("#F59E0B")));
+    for (auto i = 0; i < m_points.size(); ++i) {
+        if (m_points.at(i).quality == Monitor::Domain::Tags::TagQuality::Good) {
+            continue;
+        }
+        const auto position = pointPosition(i, m_points.at(i).value);
+        painter.drawRect(QRectF(position.x() - 3.5, position.y() - 3.5, 7.0, 7.0));
+    }
     painter.setBrush(QColor(QStringLiteral("#DC2626")));
     for (auto i = 0; i < m_points.size(); ++i) {
         if (!m_points.at(i).isSpike) {
@@ -343,6 +521,9 @@ void TrendChartWidget::paintEvent(QPaintEvent *)
     painter.drawText(QRect(4, plot.bottom() - 20, 36, 20), Qt::AlignRight, QString::number(minValue, 'f', 1));
     painter.drawText(QRect(plot.left(), plot.bottom() + 8, plot.width(), 20), Qt::AlignCenter,
                      tr("%1 points").arg(m_points.size()));
+    painter.setPen(QColor(QStringLiteral("#64748B")));
+    painter.drawText(QRect(plot.right() - 230, plot.top() + 6, 220, 18), Qt::AlignRight,
+                     tr("line: value | square: quality | dot: spike"));
 }
 
 HeatmapWidget::HeatmapWidget(QWidget *parent)
@@ -362,13 +543,19 @@ void HeatmapWidget::setSnapshot(const std::optional<MeasurementMapSnapshot> &sna
     update();
 }
 
+void HeatmapWidget::setRenderRange(const std::optional<Monitor::Application::Dtos::ScaleRange> &range)
+{
+    m_renderRange = range;
+    update();
+}
+
 QRectF HeatmapWidget::heatmapArea() const
 {
     if (!m_snapshot.has_value() || m_snapshot->frame.rows <= 0 || m_snapshot->frame.columns <= 0) {
         return QRectF();
     }
 
-    const auto size = std::max(1, std::min(width() - 20, height() - 20));
+    const auto size = std::max(1, std::min(width() - 20, height() - 44));
     return QRectF((width() - size) / 2.0, 10.0, size, size);
 }
 
@@ -422,7 +609,7 @@ void HeatmapWidget::paintEvent(QPaintEvent *)
             area.top() + cell.row * cellHeight,
             cellWidth,
             cellHeight);
-        painter.fillRect(cellRect.adjusted(0.5, 0.5, -0.5, -0.5), QColor(cell.color.r, cell.color.g, cell.color.b));
+        painter.fillRect(cellRect.adjusted(0.5, 0.5, -0.5, -0.5), heatColorFor(cell, m_renderRange));
         if (cell.isAbnormal) {
             painter.setPen(QPen(QColor(QStringLiteral("#DC2626")), 1.5));
             painter.drawRect(cellRect.adjusted(1, 1, -1, -1));
@@ -434,6 +621,21 @@ void HeatmapWidget::paintEvent(QPaintEvent *)
     }
     painter.setPen(QPen(QColor(QStringLiteral("#CBD5E1")), 1));
     painter.drawRect(area);
+
+    const auto range = m_renderRange.value_or(m_snapshot->scaleRange);
+    const QRectF legend(area.left(), area.bottom() + 10, area.width(), 10);
+    for (auto x = 0; x < static_cast<int>(legend.width()); ++x) {
+        const auto normalized = legend.width() <= 1 ? 0.0 : x / (legend.width() - 1);
+        painter.setPen(heatColorFor(normalized));
+        painter.drawLine(QPointF(legend.left() + x, legend.top()), QPointF(legend.left() + x, legend.bottom()));
+    }
+    painter.setPen(QColor(QStringLiteral("#475569")));
+    painter.drawText(QRectF(legend.left(), legend.bottom() + 2, legend.width() / 2.0, 18),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     QString::number(range.minValue, 'f', 1));
+    painter.drawText(QRectF(legend.center().x(), legend.bottom() + 2, legend.width() / 2.0, 18),
+                     Qt::AlignRight | Qt::AlignVCenter,
+                     QString::number(range.maxValue, 'f', 1));
 }
 
 void HeatmapWidget::mousePressEvent(QMouseEvent *event)
@@ -600,10 +802,17 @@ TrendPageWidget::TrendPageWidget(QWidget *parent)
     m_windowCombo->addItem(tr("1 minute"), 120);
     m_windowCombo->addItem(tr("5 minutes"), 600);
     m_windowCombo->addItem(tr("30 minutes"), 3600);
+    m_sourceCombo = new QComboBox(this);
+    m_sourceCombo->addItem(tr("Realtime"), static_cast<int>(TrendPointSource::RealtimeBuffer));
+    m_sourceCombo->addItem(tr("History"), static_cast<int>(TrendPointSource::HistorySamples));
+    auto *exportButton = new QPushButton(tr("Export CSV"), this);
+    exportButton->setObjectName(QStringLiteral("secondaryButton"));
     controls->addWidget(m_tagCombo, 0, 0);
     controls->addWidget(m_windowCombo, 0, 1);
+    controls->addWidget(m_sourceCombo, 0, 2);
     m_summaryLabel = new QLabel(this);
-    controls->addWidget(m_summaryLabel, 0, 2);
+    controls->addWidget(m_summaryLabel, 0, 3);
+    controls->addWidget(exportButton, 0, 4);
     layout->addLayout(controls);
     m_chart = new TrendChartWidget(this);
     layout->addWidget(m_chart);
@@ -614,6 +823,8 @@ TrendPageWidget::TrendPageWidget(QWidget *parent)
     layout->addWidget(m_pointsTable, 1);
     connect(m_tagCombo, &QComboBox::currentTextChanged, this, &TrendPageWidget::updateChart);
     connect(m_windowCombo, &QComboBox::currentTextChanged, this, &TrendPageWidget::updateChart);
+    connect(m_sourceCombo, &QComboBox::currentTextChanged, this, &TrendPageWidget::updateChart);
+    connect(exportButton, &QPushButton::clicked, this, &TrendPageWidget::exportTrendRows);
 }
 
 void TrendPageWidget::refresh(const UiSnapshot &snapshot)
@@ -648,12 +859,14 @@ void TrendPageWidget::updateChart()
 {
     const auto tagId = m_tagCombo->currentData().toString();
     const auto pointCount = m_windowCombo->currentData().toInt();
-    const auto points = trendPointsFor(m_snapshot, tagId, pointCount);
+    const auto source = static_cast<TrendPointSource>(m_sourceCombo->currentData().toInt());
+    const auto points = trendPointsFor(m_snapshot, tagId, pointCount, source);
     m_chart->setSeries(points, configurationFor(m_snapshot, tagId));
-    m_summaryLabel->setText(tr("%1 samples | %2 spikes | %3 bad quality")
+    m_summaryLabel->setText(tr("%1 samples | %2 spikes | %3 bad quality | %4")
                                 .arg(points.size())
                                 .arg(spikeCount(points))
-                                .arg(badQualityCount(points)));
+                                .arg(badQualityCount(points))
+                                .arg(m_sourceCombo->currentText()));
     m_pointsTable->setRowCount(limitedRowCount(points.size(), 80));
     for (auto row = 0; row < m_pointsTable->rowCount(); ++row) {
         const auto &point = points.at(points.size() - 1 - row);
@@ -662,6 +875,39 @@ void TrendPageWidget::updateChart()
         m_pointsTable->setItem(row, 2, item(Monitor::Domain::Tags::toString(point.quality)));
         m_pointsTable->setItem(row, 3, item(point.isSpike ? tr("Spike") : tr("Normal")));
     }
+}
+
+void TrendPageWidget::exportTrendRows()
+{
+    const auto path = QFileDialog::getSaveFileName(this, tr("Export Trend"), QString(), tr("CSV Files (*.csv)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QVector<QStringList> rows;
+    rows.reserve(m_pointsTable->rowCount());
+    for (auto row = 0; row < m_pointsTable->rowCount(); ++row) {
+        rows.append({
+            m_tagCombo->currentData().toString(),
+            m_tagCombo->currentText(),
+            m_sourceCombo->currentText(),
+            m_pointsTable->item(row, 0) ? m_pointsTable->item(row, 0)->text() : QString(),
+            m_pointsTable->item(row, 1) ? m_pointsTable->item(row, 1)->text() : QString(),
+            m_pointsTable->item(row, 2) ? m_pointsTable->item(row, 2)->text() : QString(),
+            m_pointsTable->item(row, 3) ? m_pointsTable->item(row, 3)->text() : QString()
+        });
+    }
+
+    QString error;
+    if (!Monitor::Presentation::Export::CsvExportWriter::write(
+            path,
+            {QStringLiteral("TagId"), QStringLiteral("Tag"), QStringLiteral("Source"), QStringLiteral("Time"), QStringLiteral("Value"), QStringLiteral("Quality"), QStringLiteral("Diagnostic")},
+            rows,
+            &error)) {
+        QMessageBox::warning(this, tr("Export Trend"), tr("Unable to write CSV file: %1").arg(error));
+        return;
+    }
+    QMessageBox::information(this, tr("Export Trend"), tr("Trend CSV exported."));
 }
 
 AlarmCenterPageWidget::AlarmCenterPageWidget(QWidget *parent)
@@ -801,21 +1047,24 @@ void HistoryPageWidget::exportCurrentRows()
     if (path.isEmpty()) {
         return;
     }
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, tr("Export History"), tr("Unable to write the selected CSV file."));
-        return;
-    }
-    QTextStream stream(&file);
-    stream.setEncoding(QStringConverter::Utf8);
-    stream << QChar(0xFEFF);
-    stream << "Time,Tag,Value,Quality,Alarm,Source\n";
+    QVector<QStringList> rows;
+    rows.reserve(m_table->rowCount());
     for (auto row = 0; row < m_table->rowCount(); ++row) {
         QStringList fields;
         for (auto column = 0; column < m_table->columnCount(); ++column) {
-            fields.append(csvEscape(m_table->item(row, column) ? m_table->item(row, column)->text() : QString()));
+            fields.append(m_table->item(row, column) ? m_table->item(row, column)->text() : QString());
         }
-        stream << fields.join(QLatin1Char(',')) << '\n';
+        rows.append(fields);
+    }
+
+    QString error;
+    if (!Monitor::Presentation::Export::CsvExportWriter::write(
+            path,
+            {QStringLiteral("Time"), QStringLiteral("Tag"), QStringLiteral("Value"), QStringLiteral("Quality"), QStringLiteral("Alarm"), QStringLiteral("Source")},
+            rows,
+            &error)) {
+        QMessageBox::warning(this, tr("Export History"), tr("Unable to write CSV file: %1").arg(error));
+        return;
     }
     QMessageBox::information(this, tr("Export History"), tr("History CSV exported."));
 }
@@ -824,10 +1073,30 @@ MeasurementMapPageWidget::MeasurementMapPageWidget(QWidget *parent)
     : QWidget(parent)
 {
     auto *layout = new QGridLayout(this);
+    auto *controls = new QGridLayout;
+    m_scaleModeCombo = new QComboBox(this);
+    m_scaleModeCombo->addItem(tr("Auto Range"), 0);
+    m_scaleModeCombo->addItem(tr("Fixed Range"), 1);
+    m_fixedMinSpin = new QDoubleSpinBox(this);
+    m_fixedMinSpin->setRange(-1000000.0, 1000000.0);
+    m_fixedMinSpin->setDecimals(2);
+    m_fixedMaxSpin = new QDoubleSpinBox(this);
+    m_fixedMaxSpin->setRange(-1000000.0, 1000000.0);
+    m_fixedMaxSpin->setDecimals(2);
+    auto *exportButton = new QPushButton(tr("Export Matrix CSV"), this);
+    exportButton->setObjectName(QStringLiteral("secondaryButton"));
+    controls->addWidget(new QLabel(tr("Scale"), this), 0, 0);
+    controls->addWidget(m_scaleModeCombo, 0, 1);
+    controls->addWidget(new QLabel(tr("Min"), this), 0, 2);
+    controls->addWidget(m_fixedMinSpin, 0, 3);
+    controls->addWidget(new QLabel(tr("Max"), this), 0, 4);
+    controls->addWidget(m_fixedMaxSpin, 0, 5);
+    controls->addWidget(exportButton, 0, 6);
     m_heatmap = new HeatmapWidget(this);
     m_qualityLabel = new QLabel(this);
     m_rangeLabel = new QLabel(this);
     m_cellLabel = new QLabel(tr("Cell: click heatmap"), this);
+    m_hotspotLabel = new QLabel(tr("Hotspot: -"), this);
     m_statsTable = new QTableWidget(this);
     m_statsTable->setColumnCount(2);
     m_statsTable->setHorizontalHeaderLabels({tr("Metric"), tr("Value")});
@@ -836,31 +1105,48 @@ MeasurementMapPageWidget::MeasurementMapPageWidget(QWidget *parent)
     m_abnormalTable->setColumnCount(5);
     m_abnormalTable->setHorizontalHeaderLabels({tr("Row"), tr("Column"), tr("Value"), tr("Severity"), tr("Message")});
     setupTable(m_abnormalTable);
-    layout->addWidget(m_heatmap, 0, 0, 4, 1);
-    layout->addWidget(m_qualityLabel, 0, 1);
-    layout->addWidget(m_rangeLabel, 1, 1);
-    layout->addWidget(m_cellLabel, 2, 1);
-    layout->addWidget(m_statsTable, 3, 1);
-    layout->addWidget(m_abnormalTable, 4, 0, 1, 2);
+    layout->addLayout(controls, 0, 0, 1, 2);
+    layout->addWidget(m_heatmap, 1, 0, 5, 1);
+    layout->addWidget(m_qualityLabel, 1, 1);
+    layout->addWidget(m_rangeLabel, 2, 1);
+    layout->addWidget(m_cellLabel, 3, 1);
+    layout->addWidget(m_hotspotLabel, 4, 1);
+    layout->addWidget(m_statsTable, 5, 1);
+    layout->addWidget(m_abnormalTable, 6, 0, 1, 2);
     connect(m_heatmap, &HeatmapWidget::cellSelected, this, [this](int row, int column, double value) {
         m_cellLabel->setText(tr("Cell: [%1, %2] = %3").arg(row).arg(column).arg(value, 0, 'f', 2));
     });
+    connect(m_scaleModeCombo, &QComboBox::currentTextChanged, this, &MeasurementMapPageWidget::updateHeatmapRenderOptions);
+    connect(m_fixedMinSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &MeasurementMapPageWidget::updateHeatmapRenderOptions);
+    connect(m_fixedMaxSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, &MeasurementMapPageWidget::updateHeatmapRenderOptions);
+    connect(exportButton, &QPushButton::clicked, this, &MeasurementMapPageWidget::exportMatrixCsv);
+    updateHeatmapRenderOptions();
 }
 
 void MeasurementMapPageWidget::refresh(const UiSnapshot &snapshot)
 {
+    m_snapshot = snapshot;
     m_heatmap->setSnapshot(snapshot.measurementMap);
     if (!snapshot.measurementMap.has_value()) {
         m_qualityLabel->setText(tr("Quality: -"));
         m_rangeLabel->setText(tr("Range: -"));
         m_cellLabel->setText(tr("Cell: -"));
+        m_hotspotLabel->setText(tr("Hotspot: -"));
         m_statsTable->setRowCount(0);
         m_abnormalTable->setRowCount(0);
         return;
     }
     const auto &map = snapshot.measurementMap.value();
-    m_qualityLabel->setText(tr("Quality: %1").arg(static_cast<int>(map.qualityState)));
+    m_qualityLabel->setText(tr("Quality: %1").arg(qualityStateText(map.qualityState)));
     m_rangeLabel->setText(tr("Range: %1 - %2 %3").arg(map.scaleRange.minValue, 0, 'f', 1).arg(map.scaleRange.maxValue, 0, 'f', 1).arg(map.unit));
+    if (!m_fixedMinSpin->hasFocus() && !m_fixedMaxSpin->hasFocus() && m_scaleModeCombo->currentData().toInt() == 0) {
+        const QSignalBlocker minBlocker(m_fixedMinSpin);
+        const QSignalBlocker maxBlocker(m_fixedMaxSpin);
+        m_fixedMinSpin->setValue(map.scaleRange.minValue);
+        m_fixedMaxSpin->setValue(map.scaleRange.maxValue);
+    }
+    m_hotspotLabel->setText(hotspotText(map));
+    updateHeatmapRenderOptions();
     const QVector<QPair<QString, QString>> stats = {
         {tr("Average"), QString::number(map.statistics.averageValue, 'f', 2)},
         {tr("Maximum"), QString::number(map.statistics.maxValue, 'f', 2)},
@@ -879,9 +1165,92 @@ void MeasurementMapPageWidget::refresh(const UiSnapshot &snapshot)
         m_abnormalTable->setItem(row, 0, item(QString::number(point.row)));
         m_abnormalTable->setItem(row, 1, item(QString::number(point.column)));
         m_abnormalTable->setItem(row, 2, numericItem(point.value, 2));
-        m_abnormalTable->setItem(row, 3, item(QString::number(static_cast<int>(point.severity))));
+        m_abnormalTable->setItem(row, 3, item(matrixSeverityText(point.severity)));
         m_abnormalTable->setItem(row, 4, item(point.message));
     }
+}
+
+void MeasurementMapPageWidget::updateHeatmapRenderOptions()
+{
+    const auto fixed = m_scaleModeCombo && m_scaleModeCombo->currentData().toInt() == 1;
+    if (m_fixedMinSpin) {
+        m_fixedMinSpin->setEnabled(fixed);
+    }
+    if (m_fixedMaxSpin) {
+        m_fixedMaxSpin->setEnabled(fixed);
+    }
+
+    if (!fixed || !m_heatmap || !m_fixedMinSpin || !m_fixedMaxSpin || m_fixedMinSpin->value() >= m_fixedMaxSpin->value()) {
+        if (m_heatmap) {
+            m_heatmap->setRenderRange(std::nullopt);
+        }
+        return;
+    }
+
+    m_heatmap->setRenderRange(Monitor::Application::Dtos::ScaleRange{m_fixedMinSpin->value(), m_fixedMaxSpin->value()});
+}
+
+void MeasurementMapPageWidget::exportMatrixCsv()
+{
+    if (!m_heatmap || !m_scaleModeCombo || !m_snapshot.measurementMap.has_value()) {
+        return;
+    }
+
+    const auto path = QFileDialog::getSaveFileName(this, tr("Export Matrix"), QString(), tr("CSV Files (*.csv)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    const auto &map = m_snapshot.measurementMap.value();
+    const auto fixed = m_scaleModeCombo->currentData().toInt() == 1 && m_fixedMinSpin->value() < m_fixedMaxSpin->value();
+    const auto renderRange = fixed
+        ? Monitor::Application::Dtos::ScaleRange{m_fixedMinSpin->value(), m_fixedMaxSpin->value()}
+        : map.scaleRange;
+    QVector<QStringList> rows;
+    rows.reserve(map.cells.size());
+    for (const auto &cell : map.cells) {
+        const auto renderNormalized = normalizedValue(cell.value, renderRange);
+        rows.append({
+            localTime(map.timestampUtc),
+            QString::number(map.sequenceNo),
+            QString::number(cell.row),
+            QString::number(cell.column),
+            QString::number(cell.value, 'f', 3),
+            QString::number(renderNormalized, 'f', 6),
+            cell.isAbnormal ? QStringLiteral("True") : QStringLiteral("False"),
+            cell.abnormalType.has_value() ? abnormalTypeText(cell.abnormalType.value()) : QString(),
+            cell.severity.has_value() ? matrixSeverityText(cell.severity.value()) : QString(),
+            cell.tooltipText,
+            QString::number(renderRange.minValue, 'f', 3),
+            QString::number(renderRange.maxValue, 'f', 3),
+            fixed ? QStringLiteral("Fixed") : QStringLiteral("Auto")
+        });
+    }
+
+    QString error;
+    if (!Monitor::Presentation::Export::CsvExportWriter::write(
+            path,
+            {
+                QStringLiteral("Time"),
+                QStringLiteral("Frame"),
+                QStringLiteral("Row"),
+                QStringLiteral("Column"),
+                QStringLiteral("Value"),
+                QStringLiteral("DisplayNormalized"),
+                QStringLiteral("Abnormal"),
+                QStringLiteral("AbnormalType"),
+                QStringLiteral("Severity"),
+                QStringLiteral("Tooltip"),
+                QStringLiteral("RangeMin"),
+                QStringLiteral("RangeMax"),
+                QStringLiteral("RangeMode")
+            },
+            rows,
+            &error)) {
+        QMessageBox::warning(this, tr("Export Matrix"), tr("Unable to write CSV file: %1").arg(error));
+        return;
+    }
+    QMessageBox::information(this, tr("Export Matrix"), tr("Matrix CSV exported."));
 }
 
 LogsSettingsPageWidget::LogsSettingsPageWidget(QWidget *parent)
