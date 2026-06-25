@@ -1,5 +1,5 @@
+#include "bootstrap/RuntimeComposition.h"
 #include "mainwindow.h"
-#include "phase0/SourceBehaviorFreeze.h"
 
 #include <QApplication>
 #include <QDebug>
@@ -20,11 +20,12 @@ int main(int argc, char *argv[])
         }
     }
 
-    QStringList phase0Errors;
-    if (!Phase0::validateSourceBehaviorFreeze(&phase0Errors)) {
-        qCritical().noquote() << "Phase 0 source behavior freeze validation failed:"
-                              << phase0Errors.join(QStringLiteral("; "));
-        return 2;
+    Monitor::Bootstrap::RuntimeComposition runtimeComposition;
+    QStringList compositionErrors;
+    if (!runtimeComposition.initialize(&compositionErrors)) {
+        qCritical().noquote() << "Runtime composition initialization failed:"
+                              << compositionErrors.join(QStringLiteral("; "));
+        return 3;
     }
 
     MainWindow w;
