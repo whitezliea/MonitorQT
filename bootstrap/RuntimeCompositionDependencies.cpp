@@ -1,13 +1,18 @@
 #include "RuntimeCompositionDependencies.h"
 
+#include "application/configuration/ConfigurationValidation.h"
+#include "application/services/TagDefinitionCatalog.h"
+
+#include <exception>
+
 namespace Monitor::Bootstrap {
 
 RuntimeCompositionDependencies RuntimeCompositionDependencies::createDefault()
 {
     RuntimeCompositionDependencies dependencies;
-    dependencies.runtimeOptions = Phase0::defaultRuntimeOptions();
+    dependencies.runtimeOptions = Monitor::Application::Configuration::MonitorRuntimeOptions();
     dependencies.databaseDriverName = QStringLiteral("QSQLITE");
-    dependencies.defaultDeviceId = Phase0::defaultDeviceId();
+    dependencies.defaultDeviceId = Monitor::Application::Services::TagDefinitionCatalog::defaultDeviceId();
     dependencies.useSimulatorDataSource = true;
     dependencies.useSqlitePersistence = true;
     return dependencies;
@@ -17,18 +22,10 @@ QStringList RuntimeCompositionDependencies::validate() const
 {
     QStringList errors;
 
-    if (runtimeOptions.dataGenerateIntervalMs <= 0) {
-        errors.append(QStringLiteral("DataGenerateIntervalMs must be greater than zero."));
-    }
-
-    if (runtimeOptions.uiRefreshIntervalMs <= 0) {
-        errors.append(QStringLiteral("UiRefreshIntervalMs must be greater than zero."));
-    }
-
-    if (runtimeOptions.historyBatchIntervalMs <= 0 ||
-        runtimeOptions.alarmBatchIntervalMs <= 0 ||
-        runtimeOptions.operationLogBatchIntervalMs <= 0) {
-        errors.append(QStringLiteral("Batch intervals must be greater than zero."));
+    try {
+        Monitor::Application::Configuration::ConfigurationValidation::validateRuntimeOptions(runtimeOptions);
+    } catch (const std::exception &exception) {
+        errors.append(QStringLiteral("Runtime options are invalid: %1").arg(QString::fromUtf8(exception.what())));
     }
 
     if (defaultDeviceId.trimmed().isEmpty()) {

@@ -1,8 +1,9 @@
 #include "mainwindow.h"
 
+#include "application/configuration/MonitorRuntimeOptions.h"
+#include "application/services/TagDefinitionCatalog.h"
 #include "navigation/NavigationService.h"
 #include "pages/PagePlaceholderWidget.h"
-#include "phase0/SourceBehaviorFreeze.h"
 #include "shell/BottomStatusBarWidget.h"
 #include "shell/SideNavigationWidget.h"
 #include "shell/TopStatusBarWidget.h"
@@ -15,6 +16,15 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+
+namespace {
+
+Monitor::Application::Configuration::MonitorRuntimeOptions defaultRuntimeOptions()
+{
+    return Monitor::Application::Configuration::MonitorRuntimeOptions();
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -41,7 +51,7 @@ MainWindow::MainWindow(QWidget *parent)
     setRunningState(false);
     refreshShellClock();
     m_navigationService->navigateTo(NavigationPage::Dashboard);
-    m_shellTimer->start(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
+    m_shellTimer->start(defaultRuntimeOptions().uiRefreshIntervalMs);
 }
 
 MainWindow::~MainWindow() = default;
@@ -122,9 +132,9 @@ void MainWindow::setupUi()
 
     m_navigationService = new NavigationService(m_pageStack, this);
     m_shellTimer = new QTimer(this);
-    m_shellTimer->setInterval(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
-    m_topStatusBar->setDeviceId(Phase0::defaultDeviceId());
-    m_bottomStatusBar->setRefreshIntervalMs(Phase0::defaultRuntimeOptions().uiRefreshIntervalMs);
+    m_shellTimer->setInterval(defaultRuntimeOptions().uiRefreshIntervalMs);
+    m_topStatusBar->setDeviceId(Monitor::Application::Services::TagDefinitionCatalog::defaultDeviceId());
+    m_bottomStatusBar->setRefreshIntervalMs(defaultRuntimeOptions().uiRefreshIntervalMs);
 }
 
 void MainWindow::createPages()

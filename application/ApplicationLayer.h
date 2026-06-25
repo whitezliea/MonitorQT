@@ -15,6 +15,7 @@ struct ApplicationLayerInfo
 };
 
 ApplicationLayerInfo applicationLayerInfo();
+QStringList validateApplicationLayer();
 
 } // namespace Monitor::Application
 

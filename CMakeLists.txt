@@ -51,8 +51,20 @@ set(DOMAIN_SOURCES
 set(APPLICATION_SOURCES
     application/ApplicationLayer.cpp
     application/ApplicationLayer.h
+    application/configuration/ConfigurationValidation.cpp
+    application/configuration/ConfigurationValidation.h
+    application/configuration/MonitorRuntimeOptions.cpp
+    application/configuration/MonitorRuntimeOptions.h
+    application/configuration/RuntimeOptionsStore.cpp
+    application/configuration/RuntimeOptionsStore.h
+    application/configuration/TagRuntimeConfiguration.cpp
+    application/configuration/TagRuntimeConfiguration.h
+    application/configuration/TrendDiagnosisOptions.cpp
+    application/configuration/TrendDiagnosisOptions.h
     application/events/EventBus.cpp
     application/events/EventBus.h
+    application/services/TagDefinitionCatalog.cpp
+    application/services/TagDefinitionCatalog.h
 )
 
 set(INFRASTRUCTURE_SOURCES
