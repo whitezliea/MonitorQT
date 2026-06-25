@@ -1,6 +1,7 @@
 #ifndef SIMULATORDATASOURCE_H
 #define SIMULATORDATASOURCE_H
 
+#include "application/abstractions/IRawFrameSource.h"
 #include "application/configuration/MonitorRuntimeOptions.h"
 #include "simulator/generators/FakeDataGenerator.h"
 
@@ -8,7 +9,7 @@
 
 namespace Monitor::Simulator::Adapters {
 
-class SimulatorDataSource
+class SimulatorDataSource : public Monitor::Application::Abstractions::IRawFrameSource
 {
 public:
     SimulatorDataSource();
@@ -17,8 +18,11 @@ public:
         const Monitor::Application::Configuration::MonitorRuntimeOptions &options);
 
     Monitor::Domain::Measurements::RawMeasurementFrame readNextFrame(const QDateTime &timestampUtc);
-    void cancel();
-    void resetCancellation();
+    bool readNextFrame(
+        const QDateTime &timestampUtc,
+        Monitor::Domain::Measurements::RawMeasurementFrame *frame) override;
+    void cancel() override;
+    void resetCancellation() override;
     bool isCanceled() const;
     int dataGenerateIntervalMs() const;
     Monitor::Simulator::Generators::FakeDataGenerator &generator();

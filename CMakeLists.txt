@@ -51,6 +51,7 @@ set(DOMAIN_SOURCES
 set(APPLICATION_SOURCES
     application/ApplicationLayer.cpp
     application/ApplicationLayer.h
+    application/abstractions/IRawFrameSource.h
     application/caches/MatrixFrameCache.cpp
     application/caches/MatrixFrameCache.h
     application/caches/TagCache.cpp
@@ -66,10 +67,24 @@ set(APPLICATION_SOURCES
     application/configuration/TrendDiagnosisOptions.cpp
     application/configuration/TrendDiagnosisOptions.h
     application/dto/ApplicationDtos.h
+    application/events/ApplicationEvents.cpp
+    application/events/ApplicationEvents.h
     application/events/EventBus.cpp
     application/events/EventBus.h
     application/pipelines/DataCleanPipeline.cpp
     application/pipelines/DataCleanPipeline.h
+    application/queues/ApplicationQueues.h
+    application/queues/BlockingQueue.h
+    application/runtime/AcquisitionRuntimeController.cpp
+    application/runtime/AcquisitionRuntimeController.h
+    application/runtime/DataSourceHealthMonitor.cpp
+    application/runtime/DataSourceHealthMonitor.h
+    application/runtime/MonitoringRuntimeService.cpp
+    application/runtime/MonitoringRuntimeService.h
+    application/runtime/PersistenceRuntimeCoordinator.cpp
+    application/runtime/PersistenceRuntimeCoordinator.h
+    application/runtime/RuntimeLifecycleCoordinator.cpp
+    application/runtime/RuntimeLifecycleCoordinator.h
     application/services/AlarmService.cpp
     application/services/AlarmService.h
     application/services/ChartDataService.cpp
@@ -80,10 +95,15 @@ set(APPLICATION_SOURCES
     application/services/MeasurementMapAnalysis.h
     application/services/MeasurementMapService.cpp
     application/services/MeasurementMapService.h
+    application/services/OperationLogService.cpp
+    application/services/OperationLogService.h
+    application/services/RuntimeEventConsumers.cpp
+    application/services/RuntimeEventConsumers.h
     application/services/TagDefinitionCatalog.cpp
     application/services/TagDefinitionCatalog.h
     application/services/TagService.cpp
     application/services/TagService.h
+    application/workers/BatchPersistWorker.h
 )
 
 set(INFRASTRUCTURE_SOURCES

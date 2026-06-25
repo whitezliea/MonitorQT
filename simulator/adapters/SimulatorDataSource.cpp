@@ -28,6 +28,18 @@ Monitor::Domain::Measurements::RawMeasurementFrame SimulatorDataSource::readNext
     return m_generator.nextFrame(timestampUtc);
 }
 
+bool SimulatorDataSource::readNextFrame(
+    const QDateTime &timestampUtc,
+    Monitor::Domain::Measurements::RawMeasurementFrame *frame)
+{
+    if (!frame || m_canceled) {
+        return false;
+    }
+
+    *frame = readNextFrame(timestampUtc);
+    return true;
+}
+
 void SimulatorDataSource::cancel()
 {
     m_canceled = true;

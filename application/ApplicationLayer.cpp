@@ -4,23 +4,36 @@
 #include "configuration/RuntimeOptionsStore.h"
 #include "configuration/TagRuntimeConfiguration.h"
 #include "configuration/TrendDiagnosisOptions.h"
+#include "abstractions/IRawFrameSource.h"
 #include "domain/common/DomainCommon.h"
 #include "domain/devices/DeviceModels.h"
 #include "domain/measurements/MeasurementModels.h"
+#include "events/EventBus.h"
 #include "pipelines/DataCleanPipeline.h"
+#include "queues/ApplicationQueues.h"
+#include "runtime/DataSourceHealthMonitor.h"
+#include "runtime/MonitoringRuntimeService.h"
+#include "runtime/PersistenceRuntimeCoordinator.h"
+#include "runtime/RuntimeLifecycleCoordinator.h"
 #include "services/AlarmService.h"
 #include "services/ChartDataService.h"
 #include "services/DashboardService.h"
 #include "services/MeasurementMapService.h"
+#include "services/OperationLogService.h"
+#include "services/RuntimeEventConsumers.h"
 #include "services/TagDefinitionCatalog.h"
 #include "services/TagService.h"
+#include "workers/BatchPersistWorker.h"
 
 #include <QHash>
 #include <QSet>
+#include <QThread>
 
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace Monitor::Application {
 namespace {
@@ -153,6 +166,44 @@ const Monitor::Domain::Alarms::AlarmEvent *findAlarm(
 
     return it == alarms.cend() ? nullptr : &(*it);
 }
+
+class ValidationRawFrameSource final : public Monitor::Application::Abstractions::IRawFrameSource
+{
+public:
+    explicit ValidationRawFrameSource(QVector<Monitor::Domain::Measurements::RawMeasurementFrame> frames)
+        : m_frames(std::move(frames))
+    {
+    }
+
+    bool readNextFrame(
+        const QDateTime &,
+        Monitor::Domain::Measurements::RawMeasurementFrame *frame) override
+    {
+        if (m_canceled || !frame || m_index >= m_frames.size()) {
+            return false;
+        }
+
+        *frame = m_frames.at(m_index);
+        ++m_index;
+        return true;
+    }
+
+    void cancel() override
+    {
+        m_canceled = true;
+    }
+
+    void resetCancellation() override
+    {
+        m_canceled = false;
+        m_index = 0;
+    }
+
+private:
+    QVector<Monitor::Domain::Measurements::RawMeasurementFrame> m_frames;
+    int m_index = 0;
+    bool m_canceled = false;
+};
 
 } // namespace
 
@@ -472,6 +523,210 @@ QStringList validateApplicationLayer()
             !nearlyEqual(matrixSnapshot->scaleRange.minValue, 600.0) ||
             !nearlyEqual(matrixSnapshot->scaleRange.maxValue, 645.0)) {
             addError(&errors, QStringLiteral("MeasurementMapService must build matrix preview cells and scale range."));
+        }
+
+        {
+            EventBus eventBus;
+            auto isolatedHandlerRan = false;
+            auto trailingHandlerRan = false;
+            eventBus.registerHandler(
+                QStringLiteral("RawFrameReceivedEvent"),
+                QStringLiteral("IsolatedThrowingConsumer"),
+                EventHandlerFailurePolicy::Isolated,
+                10,
+                [](const Monitor::Application::Events::ApplicationEvent &) {
+                    throw std::runtime_error("isolated failure");
+                });
+            eventBus.registerHandler(
+                QStringLiteral("RawFrameReceivedEvent"),
+                QStringLiteral("TrailingConsumer"),
+                EventHandlerFailurePolicy::Critical,
+                20,
+                [&trailingHandlerRan, &isolatedHandlerRan](const Monitor::Application::Events::ApplicationEvent &) {
+                    isolatedHandlerRan = true;
+                    trailingHandlerRan = true;
+                });
+            QStringList publishErrors;
+            if (!eventBus.publish(Monitor::Application::Events::RawFrameReceivedEvent{firstFrame}, &publishErrors) ||
+                publishErrors.isEmpty() ||
+                !isolatedHandlerRan ||
+                !trailingHandlerRan) {
+                addError(&errors, QStringLiteral("EventBus must isolate non-critical handler failures and continue dispatching."));
+            }
+
+            EventBus criticalBus;
+            criticalBus.registerHandler(
+                QStringLiteral("RawFrameReceivedEvent"),
+                QStringLiteral("CriticalThrowingConsumer"),
+                EventHandlerFailurePolicy::Critical,
+                10,
+                [](const Monitor::Application::Events::ApplicationEvent &) {
+                    throw std::runtime_error("critical failure");
+                });
+            QStringList criticalErrors;
+            if (criticalBus.publish(Monitor::Application::Events::RawFrameReceivedEvent{firstFrame}, &criticalErrors) ||
+                criticalErrors.isEmpty()) {
+                addError(&errors, QStringLiteral("EventBus must stop dispatching when a critical handler fails."));
+            }
+        }
+
+        Configuration::MonitorRuntimeOptions stage6Options;
+        stage6Options.dataGenerateIntervalMs = 1;
+        stage6Options.dataSourceTimeoutPeriods = 2;
+        Services::TagService runtimeTagService(8);
+        Services::MeasurementMapService runtimeMeasurementMapService;
+        Queues::HistorySampleQueue historyQueue;
+        Queues::AlarmEventQueue alarmEventQueue;
+        Queues::OperationLogQueue operationLogQueue;
+        Services::OperationLogService operationLogService(&operationLogQueue);
+        Services::TagCacheConsumer tagCacheConsumer(&runtimeTagService);
+        Services::MeasurementMapFrameConsumer measurementMapFrameConsumer(&runtimeMeasurementMapService);
+        Services::HistoryRuntimeStateConsumer historyRuntimeStateConsumer(&historyQueue, definitions);
+        Services::AlarmEventConsumer alarmEventConsumer(&alarmEventQueue);
+        Services::AlarmOperationLogConsumer alarmOperationLogConsumer(&operationLogService);
+        Services::DataSourceHealthOperationLogConsumer dataSourceHealthOperationLogConsumer(&operationLogService);
+        EventBus runtimeEventBus;
+        QStringList registrationErrors;
+        if (!Services::registerDefaultRuntimeConsumers(
+                &runtimeEventBus,
+                &tagCacheConsumer,
+                &measurementMapFrameConsumer,
+                &historyRuntimeStateConsumer,
+                &alarmEventConsumer,
+                &alarmOperationLogConsumer,
+                &dataSourceHealthOperationLogConsumer,
+                &registrationErrors) ||
+            !registrationErrors.isEmpty()) {
+            addError(&errors, QStringLiteral("Runtime event consumers must register successfully."));
+        }
+
+        Pipelines::DataCleanPipeline runtimePipeline(definitions, mappings);
+        Services::AlarmService runtimeAlarmService(definitions);
+        const auto runtimeFrame = createValidationFrame(100, validationTimestamp(6000), 6.0);
+        ValidationRawFrameSource runtimeSource({runtimeFrame});
+        Runtime::DataSourceHealthMonitor healthMonitor;
+        Runtime::MonitoringRuntimeService monitoringRuntime(
+            &runtimeSource,
+            &runtimePipeline,
+            &runtimeAlarmService,
+            &runtimeEventBus,
+            stage6Options,
+            &healthMonitor);
+        QStringList runtimeErrors;
+        if (!monitoringRuntime.processFrame(runtimeFrame, &runtimeErrors) || !runtimeErrors.isEmpty()) {
+            addError(&errors, QStringLiteral("MonitoringRuntimeService must process a raw frame through the event chain."));
+        }
+
+        const auto runtimeTagSnapshot = runtimeTagService.snapshot();
+        if (runtimeTagSnapshot.currentValues.size() != 22 ||
+            !runtimeMeasurementMapService.latestAnalysis().has_value() ||
+            alarmEventQueue.size() != 1 ||
+            operationLogQueue.size() != 1 ||
+            historyQueue.size() == 0) {
+            addError(&errors, QStringLiteral("Runtime consumers must update tag cache, matrix snapshot, alarm queue, operation log queue and history queue."));
+        }
+
+        QThread::msleep(4);
+        QStringList timeoutErrors;
+        if (!monitoringRuntime.publishOfflineStatesIfTimedOut(QDateTime::currentDateTimeUtc(), &timeoutErrors) ||
+            !timeoutErrors.isEmpty()) {
+            addError(&errors, QStringLiteral("MonitoringRuntimeService must publish offline states when the data source times out."));
+        }
+        const auto offlineSnapshot = runtimeTagService.snapshot();
+        const auto *offlinePower = findRuntimeState(offlineSnapshot.currentValues, QStringLiteral("MEAS.POWER.CH01"));
+        if (healthMonitor.status().state != Runtime::DataSourceHealthState::TimedOut ||
+            !offlinePower ||
+            offlinePower->quality != Monitor::Domain::Tags::TagQuality::Offline ||
+            operationLogQueue.size() < 2) {
+            addError(&errors, QStringLiteral("DataSourceHealthMonitor timeout must publish operation log and offline runtime states."));
+        }
+
+        Queues::HistorySampleQueue workerQueue;
+        QVector<Monitor::Domain::Tags::TagValue> persistedHistory;
+        Workers::BatchPersistWorker<Monitor::Domain::Tags::TagValue> historyWorker(
+            QStringLiteral("History"),
+            &workerQueue,
+            20,
+            2,
+            [&persistedHistory](const QVector<Monitor::Domain::Tags::TagValue> &items) {
+                persistedHistory += items;
+            });
+        historyWorker.start();
+        workerQueue.enqueue(Monitor::Domain::Tags::TagValue{
+            QStringLiteral("MEAS.TEMP.CH01"),
+            20.0,
+            validationTimestamp(7000),
+            Monitor::Domain::Tags::TagQuality::Good,
+            Monitor::Domain::Tags::TagAlarmState::Normal,
+            QStringLiteral("validation"),
+            1
+        });
+        workerQueue.enqueue(Monitor::Domain::Tags::TagValue{
+            QStringLiteral("MEAS.TEMP.CH01"),
+            21.0,
+            validationTimestamp(7500),
+            Monitor::Domain::Tags::TagQuality::Good,
+            Monitor::Domain::Tags::TagAlarmState::Normal,
+            QStringLiteral("validation"),
+            2
+        });
+        QThread::msleep(50);
+        historyWorker.stop();
+        if (persistedHistory.size() < 2 ||
+            historyWorker.status().state != Workers::PersistWorkerState::Stopped) {
+            addError(&errors, QStringLiteral("BatchPersistWorker must flush queued items by batch size or shutdown."));
+        }
+
+        std::atomic_int runtimeIterations = 0;
+        Runtime::RuntimeLifecycleCoordinator lifecycle([&runtimeIterations](std::atomic_bool &stopRequested) {
+            while (!stopRequested.load()) {
+                ++runtimeIterations;
+                QThread::msleep(5);
+            }
+        });
+        if (!lifecycle.start()) {
+            addError(&errors, QStringLiteral("RuntimeLifecycleCoordinator must start a runtime thread."));
+        }
+        QThread::msleep(25);
+        if (!lifecycle.stop() ||
+            runtimeIterations.load() == 0 ||
+            lifecycle.status().state != Runtime::RuntimeLifecycleState::Stopped) {
+            addError(&errors, QStringLiteral("RuntimeLifecycleCoordinator must stop and join the runtime thread cleanly."));
+        }
+
+        Queues::OperationLogQueue controllerLogQueue;
+        Services::OperationLogService controllerLogService(&controllerLogQueue);
+        Queues::HistorySampleQueue controllerHistoryQueue;
+        QVector<Monitor::Domain::Tags::TagValue> controllerPersistedHistory;
+        Workers::BatchPersistWorker<Monitor::Domain::Tags::TagValue> controllerHistoryWorker(
+            QStringLiteral("History"),
+            &controllerHistoryQueue,
+            20,
+            10,
+            [&controllerPersistedHistory](const QVector<Monitor::Domain::Tags::TagValue> &items) {
+                controllerPersistedHistory += items;
+            });
+        Runtime::PersistenceRuntimeCoordinator persistenceRuntime({&controllerHistoryWorker});
+        if (!persistenceRuntime.start() ||
+            persistenceRuntime.status().state != Runtime::PersistenceRuntimeState::Running) {
+            addError(&errors, QStringLiteral("PersistenceRuntimeCoordinator must start configured workers."));
+        }
+        controllerHistoryQueue.enqueue(Monitor::Domain::Tags::TagValue{
+            QStringLiteral("MEAS.CURRENT.CH01"),
+            1.0,
+            validationTimestamp(8000),
+            Monitor::Domain::Tags::TagQuality::Good,
+            Monitor::Domain::Tags::TagAlarmState::Normal,
+            QStringLiteral("validation"),
+            3
+        });
+        if (!persistenceRuntime.flushHistory()) {
+            addError(&errors, QStringLiteral("PersistenceRuntimeCoordinator must flush the History worker explicitly."));
+        }
+        persistenceRuntime.stop();
+        if (controllerPersistedHistory.isEmpty() ||
+            persistenceRuntime.status().state != Runtime::PersistenceRuntimeState::Stopped) {
+            addError(&errors, QStringLiteral("PersistenceRuntimeCoordinator must stop workers after flushing."));
         }
     } catch (const std::exception &exception) {
         addError(&errors, QStringLiteral("Application validation threw unexpectedly: %1").arg(QString::fromUtf8(exception.what())));
