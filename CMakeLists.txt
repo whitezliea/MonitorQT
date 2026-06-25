@@ -103,6 +103,8 @@ set(APPLICATION_SOURCES
     application/services/TagDefinitionCatalog.h
     application/services/TagService.cpp
     application/services/TagService.h
+    application/services/UiSnapshotProvider.cpp
+    application/services/UiSnapshotProvider.h
     application/workers/BatchPersistWorker.h
 )
 
@@ -162,6 +164,8 @@ set(PRESENTATION_SOURCES
     pages/PagePlaceholderWidget.h
     presentation/PresentationLayer.cpp
     presentation/PresentationLayer.h
+    presentation/pages/MonitoringPages.cpp
+    presentation/pages/MonitoringPages.h
     shell/BottomStatusBarWidget.cpp
     shell/BottomStatusBarWidget.h
     shell/SideNavigationWidget.cpp

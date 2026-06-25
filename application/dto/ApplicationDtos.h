@@ -2,8 +2,11 @@
 #define APPLICATIONDTOS_H
 
 #include "domain/alarms/AlarmModels.h"
+#include "domain/logs/LogModels.h"
 #include "domain/measurements/MeasurementModels.h"
 #include "domain/tags/TagModels.h"
+#include "application/configuration/MonitorRuntimeOptions.h"
+#include "application/configuration/TagRuntimeConfiguration.h"
 
 #include <QDateTime>
 #include <QString>
@@ -260,6 +263,32 @@ struct MatrixPreview
     QVector<MatrixPreviewCell> cells;
     QUuid sourceFrameId;
     qint64 sequenceNo = 0;
+};
+
+struct ShellSnapshot
+{
+    bool running = false;
+    bool dataSourceConnected = false;
+    bool databaseConnected = false;
+    quint64 lastFrameIndex = 0;
+    qint64 matrixFrameIndex = 0;
+    QString syncState = QStringLiteral("Idle");
+    QDateTime capturedAtUtc;
+};
+
+struct UiSnapshot
+{
+    ShellSnapshot shell;
+    DashboardSnapshot dashboard;
+    Monitor::Domain::Tags::TagSnapshot tags;
+    QVector<Monitor::Domain::Alarms::AlarmEvent> currentAlarms;
+    QVector<Monitor::Domain::Alarms::AlarmEvent> alarmHistory;
+    QVector<Monitor::Domain::Tags::TagValue> historySamples;
+    QVector<Monitor::Domain::Logs::OperationLog> operationLogs;
+    std::optional<MeasurementMapSnapshot> measurementMap;
+    Monitor::Application::Configuration::MonitorRuntimeOptions runtimeOptions;
+    QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> tagConfigurations;
+    QVector<Monitor::Domain::Tags::TagDefinition> tagDefinitions;
 };
 
 } // namespace Monitor::Application::Dtos

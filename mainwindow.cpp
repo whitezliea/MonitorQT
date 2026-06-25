@@ -1,14 +1,18 @@
 #include "mainwindow.h"
 
 #include "application/configuration/MonitorRuntimeOptions.h"
+#include "application/services/UiSnapshotProvider.h"
 #include "application/services/TagDefinitionCatalog.h"
 #include "navigation/NavigationService.h"
-#include "pages/PagePlaceholderWidget.h"
+#include "presentation/pages/MonitoringPages.h"
 #include "shell/BottomStatusBarWidget.h"
 #include "shell/SideNavigationWidget.h"
 #include "shell/TopStatusBarWidget.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -28,6 +32,7 @@ Monitor::Application::Configuration::MonitorRuntimeOptions defaultRuntimeOptions
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
+    , m_snapshotProvider(std::make_unique<Monitor::Application::Services::UiSnapshotProvider>())
 {
     setupUi();
     createPages();
@@ -64,22 +69,36 @@ void MainWindow::handleCurrentPageChanged(NavigationPage page, const QString &ti
 
 void MainWindow::startMonitoring()
 {
+    m_snapshotProvider->setRunning(true);
     setRunningState(true);
+    refreshShellClock();
 }
 
 void MainWindow::stopMonitoring()
 {
+    m_snapshotProvider->setRunning(false);
     setRunningState(false);
+    refreshShellClock();
 }
 
 void MainWindow::refreshShellClock()
 {
-    if (m_running) {
-        ++m_lastFrame;
-        m_bottomStatusBar->setLastFrame(m_lastFrame);
-    }
-
+    const auto snapshot = m_snapshotProvider->refresh(databaseReady());
+    m_lastFrame = snapshot.shell.lastFrameIndex;
+    m_bottomStatusBar->setDataSourceConnected(snapshot.shell.dataSourceConnected);
+    m_bottomStatusBar->setDatabaseConnected(snapshot.shell.databaseConnected);
+    m_bottomStatusBar->setLastFrame(snapshot.shell.lastFrameIndex);
+    m_bottomStatusBar->setMatrixFrame(snapshot.shell.matrixFrameIndex);
+    m_bottomStatusBar->setSyncState(snapshot.shell.syncState);
     m_bottomStatusBar->setCurrentTime(QDateTime::currentDateTime());
+    refreshPages(snapshot);
+}
+
+void MainWindow::acknowledgeAlarm(const QUuid &alarmId)
+{
+    if (m_snapshotProvider->acknowledgeAlarm(alarmId)) {
+        refreshShellClock();
+    }
 }
 
 void MainWindow::setupUi()
@@ -139,20 +158,36 @@ void MainWindow::setupUi()
 
 void MainWindow::createPages()
 {
-    m_navigationService->registerPage(NavigationPage::Dashboard,
-                                      new PagePlaceholderWidget(NavigationPage::Dashboard, this));
-    m_navigationService->registerPage(NavigationPage::RealtimeTags,
-                                      new PagePlaceholderWidget(NavigationPage::RealtimeTags, this));
-    m_navigationService->registerPage(NavigationPage::Trend,
-                                      new PagePlaceholderWidget(NavigationPage::Trend, this));
-    m_navigationService->registerPage(NavigationPage::AlarmCenter,
-                                      new PagePlaceholderWidget(NavigationPage::AlarmCenter, this));
-    m_navigationService->registerPage(NavigationPage::History,
-                                      new PagePlaceholderWidget(NavigationPage::History, this));
-    m_navigationService->registerPage(NavigationPage::MeasurementMap,
-                                      new PagePlaceholderWidget(NavigationPage::MeasurementMap, this));
-    m_navigationService->registerPage(NavigationPage::LogsSettings,
-                                      new PagePlaceholderWidget(NavigationPage::LogsSettings, this));
+    m_dashboardPage = new DashboardPageWidget(this);
+    m_realtimeTagsPage = new RealtimeTagsPageWidget(this);
+    m_trendPage = new TrendPageWidget(this);
+    m_alarmCenterPage = new AlarmCenterPageWidget(this);
+    m_historyPage = new HistoryPageWidget(this);
+    m_measurementMapPage = new MeasurementMapPageWidget(this);
+    m_logsSettingsPage = new LogsSettingsPageWidget(this);
+
+    connect(m_alarmCenterPage, &AlarmCenterPageWidget::acknowledgeRequested,
+            this, &MainWindow::acknowledgeAlarm);
+    connect(m_logsSettingsPage, &LogsSettingsPageWidget::runtimeOptionsSaveRequested,
+            this, [this](const Monitor::Application::Configuration::MonitorRuntimeOptions &options) {
+                m_snapshotProvider->saveRuntimeOptions(options);
+                m_shellTimer->setInterval(options.uiRefreshIntervalMs);
+                m_bottomStatusBar->setRefreshIntervalMs(options.uiRefreshIntervalMs);
+                refreshShellClock();
+            });
+    connect(m_logsSettingsPage, &LogsSettingsPageWidget::tagConfigurationsSaveRequested,
+            this, [this](const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations) {
+                m_snapshotProvider->saveTagConfigurations(configurations);
+                refreshShellClock();
+            });
+
+    m_navigationService->registerPage(NavigationPage::Dashboard, m_dashboardPage);
+    m_navigationService->registerPage(NavigationPage::RealtimeTags, m_realtimeTagsPage);
+    m_navigationService->registerPage(NavigationPage::Trend, m_trendPage);
+    m_navigationService->registerPage(NavigationPage::AlarmCenter, m_alarmCenterPage);
+    m_navigationService->registerPage(NavigationPage::History, m_historyPage);
+    m_navigationService->registerPage(NavigationPage::MeasurementMap, m_measurementMapPage);
+    m_navigationService->registerPage(NavigationPage::LogsSettings, m_logsSettingsPage);
 }
 
 void MainWindow::applyApplicationStyle()
@@ -268,6 +303,51 @@ void MainWindow::applyApplicationStyle()
             border-top: 1px solid #D9E2EA;
             color: #475569;
         }
+
+        QFrame#summaryCard {
+            background: #F8FAFC;
+            border: 1px solid #D9E2EA;
+            border-radius: 8px;
+        }
+
+        QLabel#cardTitle {
+            color: #64748B;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        QLabel#cardValue {
+            color: #0F172A;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        QTableWidget {
+            background: #FFFFFF;
+            alternate-background-color: #F8FAFC;
+            border: 1px solid #D9E2EA;
+            gridline-color: #E2E8F0;
+            selection-background-color: #DDEAF3;
+            selection-color: #0F172A;
+        }
+
+        QHeaderView::section {
+            background: #EEF3F6;
+            color: #334155;
+            border: 0;
+            border-right: 1px solid #D9E2EA;
+            border-bottom: 1px solid #D9E2EA;
+            padding: 6px;
+            font-weight: 700;
+        }
+
+        QLineEdit, QComboBox, QSpinBox {
+            min-height: 30px;
+            border: 1px solid #CBD5E1;
+            border-radius: 6px;
+            padding: 4px 8px;
+            background: #FFFFFF;
+        }
     )"));
 }
 
@@ -277,4 +357,22 @@ void MainWindow::setRunningState(bool running)
     m_topStatusBar->setRunning(running);
     m_topStatusBar->setAcquisitionConnected(running);
     m_bottomStatusBar->setDataSourceConnected(running);
+}
+
+void MainWindow::refreshPages(const Monitor::Application::Dtos::UiSnapshot &snapshot)
+{
+    m_dashboardPage->refresh(snapshot);
+    m_realtimeTagsPage->refresh(snapshot);
+    m_trendPage->refresh(snapshot);
+    m_alarmCenterPage->refresh(snapshot);
+    m_historyPage->refresh(snapshot);
+    m_measurementMapPage->refresh(snapshot);
+    m_logsSettingsPage->refresh(snapshot);
+}
+
+bool MainWindow::databaseReady() const
+{
+    const auto path = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("data/multichannel-monitor.db"));
+    return QFileInfo::exists(path);
 }
