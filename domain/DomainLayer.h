@@ -14,6 +14,7 @@ struct DomainLayerInfo
 };
 
 DomainLayerInfo domainLayerInfo();
+QStringList validateDomainLayer();
 
 } // namespace Monitor::Domain
 

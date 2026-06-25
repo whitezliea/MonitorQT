@@ -24,8 +24,26 @@ endfunction()
 set(TS_FILES MonitorQT_zh_CN.ts)
 
 set(DOMAIN_SOURCES
+    domain/alarms/AlarmModels.cpp
+    domain/alarms/AlarmModels.h
+    domain/common/DomainCommon.cpp
+    domain/common/DomainCommon.h
+    domain/devices/DeviceModels.cpp
+    domain/devices/DeviceModels.h
     domain/DomainLayer.cpp
     domain/DomainLayer.h
+    domain/logs/LogModels.cpp
+    domain/logs/LogModels.h
+    domain/measurements/MeasurementModels.cpp
+    domain/measurements/MeasurementModels.h
+    domain/rules/DomainRules.cpp
+    domain/rules/DomainRules.h
+    domain/rules/MatrixStatisticsCalculator.cpp
+    domain/rules/MatrixStatisticsCalculator.h
+    domain/tags/TagModels.cpp
+    domain/tags/TagModels.h
+    domain/tasks/TaskModels.cpp
+    domain/tasks/TaskModels.h
     phase0/SourceBehaviorFreeze.cpp
     phase0/SourceBehaviorFreeze.h
 )

@@ -63,6 +63,8 @@ bool RuntimeComposition::initialize(QStringList *errors)
         appendErrors(errors, phase0Errors);
     }
 
+    appendErrors(errors, Monitor::Domain::validateDomainLayer());
+
     appendErrors(errors, m_dependencies.validate());
 
     m_layerTargetNames = collectLayerTargetNames();
