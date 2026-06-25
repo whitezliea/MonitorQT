@@ -12,6 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Widgets Sql LinguistTools)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets Sql LinguistTools)
 
+enable_testing()
+
 function(monitor_apply_target_defaults target_name)
     target_include_directories(${target_name} PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -300,3 +302,19 @@ install(TARGETS MonitorQT
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(MonitorQT)
 endif()
+
+add_executable(MonitorCoreTests
+    tests/MonitorCoreTests.cpp
+)
+monitor_apply_target_defaults(MonitorCoreTests)
+target_link_libraries(MonitorCoreTests PRIVATE
+    MonitorDomain
+    MonitorApplication
+    MonitorInfrastructure
+    MonitorSimulator
+    MonitorPresentation
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Sql
+)
+add_test(NAME MonitorCoreTests COMMAND MonitorCoreTests)

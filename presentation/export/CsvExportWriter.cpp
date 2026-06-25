@@ -23,7 +23,13 @@ bool CsvExportWriter::write(
     QTextStream stream(&file);
     stream.setEncoding(QStringConverter::Utf8);
     stream << QChar(0xFEFF);
-    stream << headers.join(QLatin1Char(',')) << '\n';
+
+    QStringList escapedHeaders;
+    escapedHeaders.reserve(headers.size());
+    for (const auto &header : headers) {
+        escapedHeaders.append(escape(header));
+    }
+    stream << escapedHeaders.join(QLatin1Char(',')) << '\n';
 
     for (const auto &row : rows) {
         QStringList fields;
