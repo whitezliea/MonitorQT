@@ -1,7 +1,8 @@
 #include "mainwindow.h"
 
 #include "application/configuration/MonitorRuntimeOptions.h"
-#include "application/services/UiSnapshotProvider.h"
+#include "application/services/RuntimeCommandFacade.h"
+#include "application/services/RuntimeUiSnapshotProvider.h"
 #include "application/services/TagDefinitionCatalog.h"
 #include "navigation/NavigationService.h"
 #include "presentation/pages/MonitoringPages.h"
@@ -9,10 +10,8 @@
 #include "shell/SideNavigationWidget.h"
 #include "shell/TopStatusBarWidget.h"
 
-#include <QCoreApplication>
 #include <QDateTime>
-#include <QDir>
-#include <QFileInfo>
+#include <QDebug>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -20,6 +19,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <stdexcept>
 
 namespace {
 
@@ -30,10 +31,18 @@ Monitor::Application::Configuration::MonitorRuntimeOptions defaultRuntimeOptions
 
 } // namespace
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(
+    Monitor::Application::Services::RuntimeCommandFacade *runtimeCommands,
+    Monitor::Application::Services::RuntimeUiSnapshotProvider *snapshotProvider,
+    QWidget *parent)
     : QMainWindow(parent)
-    , m_snapshotProvider(std::make_unique<Monitor::Application::Services::UiSnapshotProvider>())
+    , m_runtimeCommands(runtimeCommands)
+    , m_snapshotProvider(snapshotProvider)
 {
+    if (!m_runtimeCommands || !m_snapshotProvider) {
+        throw std::invalid_argument("MainWindow requires runtime command facade and snapshot provider.");
+    }
+
     setupUi();
     createPages();
     applyApplicationStyle();
@@ -69,36 +78,48 @@ void MainWindow::handleCurrentPageChanged(NavigationPage page, const QString &ti
 
 void MainWindow::startMonitoring()
 {
-    m_snapshotProvider->setRunning(true);
-    setRunningState(true);
+    QStringList errors;
+    if (!m_runtimeCommands->start(&errors)) {
+        reportCommandErrors(tr("Start monitoring"), errors);
+    }
     refreshShellClock();
 }
 
 void MainWindow::stopMonitoring()
 {
-    m_snapshotProvider->setRunning(false);
-    setRunningState(false);
+    QStringList errors;
+    if (!m_runtimeCommands->stop(&errors) && m_running) {
+        reportCommandErrors(tr("Stop monitoring"), errors);
+    }
     refreshShellClock();
 }
 
 void MainWindow::refreshShellClock()
 {
-    const auto snapshot = m_snapshotProvider->refresh(databaseReady());
+    const auto snapshot = m_snapshotProvider->refresh();
     m_lastFrame = snapshot.shell.lastFrameIndex;
+    setRunningState(snapshot.shell.running);
     m_bottomStatusBar->setDataSourceConnected(snapshot.shell.dataSourceConnected);
     m_bottomStatusBar->setDatabaseConnected(snapshot.shell.databaseConnected);
     m_bottomStatusBar->setLastFrame(snapshot.shell.lastFrameIndex);
     m_bottomStatusBar->setMatrixFrame(snapshot.shell.matrixFrameIndex);
     m_bottomStatusBar->setSyncState(snapshot.shell.syncState);
     m_bottomStatusBar->setCurrentTime(QDateTime::currentDateTime());
+    if (snapshot.runtimeOptions.uiRefreshIntervalMs > 0 &&
+        m_shellTimer->interval() != snapshot.runtimeOptions.uiRefreshIntervalMs) {
+        m_shellTimer->setInterval(snapshot.runtimeOptions.uiRefreshIntervalMs);
+        m_bottomStatusBar->setRefreshIntervalMs(snapshot.runtimeOptions.uiRefreshIntervalMs);
+    }
     refreshPages(snapshot);
 }
 
 void MainWindow::acknowledgeAlarm(const QUuid &alarmId)
 {
-    if (m_snapshotProvider->acknowledgeAlarm(alarmId)) {
-        refreshShellClock();
+    QStringList errors;
+    if (!m_runtimeCommands->acknowledgeAlarm(alarmId, &errors)) {
+        reportCommandErrors(tr("Acknowledge alarm"), errors);
     }
+    refreshShellClock();
 }
 
 void MainWindow::setupUi()
@@ -170,14 +191,20 @@ void MainWindow::createPages()
             this, &MainWindow::acknowledgeAlarm);
     connect(m_logsSettingsPage, &LogsSettingsPageWidget::runtimeOptionsSaveRequested,
             this, [this](const Monitor::Application::Configuration::MonitorRuntimeOptions &options) {
-                m_snapshotProvider->saveRuntimeOptions(options);
-                m_shellTimer->setInterval(options.uiRefreshIntervalMs);
-                m_bottomStatusBar->setRefreshIntervalMs(options.uiRefreshIntervalMs);
+                QStringList errors;
+                if (!m_runtimeCommands->saveRuntimeOptions(options, &errors)) {
+                    reportCommandErrors(tr("Save runtime options"), errors);
+                    return;
+                }
                 refreshShellClock();
             });
     connect(m_logsSettingsPage, &LogsSettingsPageWidget::tagConfigurationsSaveRequested,
             this, [this](const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations) {
-                m_snapshotProvider->saveTagConfigurations(configurations);
+                QStringList errors;
+                if (!m_runtimeCommands->saveTagConfigurations(configurations, &errors)) {
+                    reportCommandErrors(tr("Save tag configurations"), errors);
+                    return;
+                }
                 refreshShellClock();
             });
 
@@ -420,6 +447,15 @@ void MainWindow::setRunningState(bool running)
     m_bottomStatusBar->setDataSourceConnected(running);
 }
 
+void MainWindow::reportCommandErrors(const QString &action, const QStringList &errors)
+{
+    const auto detail = errors.isEmpty()
+        ? QStringLiteral("No details.")
+        : errors.join(QStringLiteral("; "));
+    qWarning().noquote() << action << "failed:" << detail;
+    m_bottomStatusBar->setSyncState(QStringLiteral("%1 failed").arg(action));
+}
+
 void MainWindow::refreshPages(const Monitor::Application::Dtos::UiSnapshot &snapshot)
 {
     m_dashboardPage->refresh(snapshot);
@@ -429,11 +465,4 @@ void MainWindow::refreshPages(const Monitor::Application::Dtos::UiSnapshot &snap
     m_historyPage->refresh(snapshot);
     m_measurementMapPage->refresh(snapshot);
     m_logsSettingsPage->refresh(snapshot);
-}
-
-bool MainWindow::databaseReady() const
-{
-    const auto path = QDir(QCoreApplication::applicationDirPath())
-        .filePath(QStringLiteral("data/multichannel-monitor.db"));
-    return QFileInfo::exists(path);
 }

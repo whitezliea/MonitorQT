@@ -4,16 +4,16 @@
 #include "navigation/NavigationPage.h"
 
 #include <QMainWindow>
+#include <QStringList>
 #include <QUuid>
-
-#include <memory>
 
 namespace Monitor::Application::Dtos {
 struct UiSnapshot;
 }
 
 namespace Monitor::Application::Services {
-class UiSnapshotProvider;
+class RuntimeCommandFacade;
+class RuntimeUiSnapshotProvider;
 }
 
 class BottomStatusBarWidget;
@@ -36,7 +36,10 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(
+        Monitor::Application::Services::RuntimeCommandFacade *runtimeCommands,
+        Monitor::Application::Services::RuntimeUiSnapshotProvider *snapshotProvider,
+        QWidget *parent = nullptr);
     ~MainWindow() override;
 
 private slots:
@@ -51,8 +54,8 @@ private:
     void createPages();
     void applyApplicationStyle();
     void setRunningState(bool running);
+    void reportCommandErrors(const QString &action, const QStringList &errors);
     void refreshPages(const Monitor::Application::Dtos::UiSnapshot &snapshot);
-    bool databaseReady() const;
 
     TopStatusBarWidget *m_topStatusBar = nullptr;
     SideNavigationWidget *m_sideNavigation = nullptr;
@@ -68,7 +71,8 @@ private:
     HistoryPageWidget *m_historyPage = nullptr;
     MeasurementMapPageWidget *m_measurementMapPage = nullptr;
     LogsSettingsPageWidget *m_logsSettingsPage = nullptr;
-    std::unique_ptr<Monitor::Application::Services::UiSnapshotProvider> m_snapshotProvider;
+    Monitor::Application::Services::RuntimeCommandFacade *m_runtimeCommands = nullptr;
+    Monitor::Application::Services::RuntimeUiSnapshotProvider *m_snapshotProvider = nullptr;
 
     bool m_running = false;
     quint64 m_lastFrame = 0;

@@ -339,6 +339,13 @@ bool RuntimeComposition::initialize(QStringList *errors)
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
                 m_operationLogService.get());
+            m_runtimeCommandFacade = std::make_unique<Monitor::Application::Services::RuntimeCommandFacade>(
+                m_acquisitionRuntimeController.get(),
+                m_monitoringRuntimeService.get(),
+                m_runtimeOptionsStore.get(),
+                m_tagRuntimeConfigurationStore.get(),
+                m_alarmService.get(),
+                m_operationLogService.get());
             m_runtimeUiSnapshotProvider = std::make_unique<Monitor::Application::Services::RuntimeUiSnapshotProvider>(
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
@@ -483,6 +490,11 @@ Monitor::Application::Services::MeasurementMapService *RuntimeComposition::measu
 Monitor::Application::Services::OperationLogService *RuntimeComposition::operationLogService()
 {
     return m_operationLogService.get();
+}
+
+Monitor::Application::Services::RuntimeCommandFacade *RuntimeComposition::runtimeCommandFacade()
+{
+    return m_runtimeCommandFacade.get();
 }
 
 Monitor::Application::Services::RuntimeUiSnapshotProvider *RuntimeComposition::runtimeUiSnapshotProvider()

@@ -587,6 +587,7 @@ void runRuntimeCompositionObjectGraphTests()
     expect(composition.chartDataService(), QStringLiteral("Composition must expose ChartDataService."));
     expect(composition.measurementMapService(), QStringLiteral("Composition must expose MeasurementMapService."));
     expect(composition.operationLogService(), QStringLiteral("Composition must expose OperationLogService."));
+    expect(composition.runtimeCommandFacade(), QStringLiteral("Composition must expose RuntimeCommandFacade."));
     expect(composition.runtimeUiSnapshotProvider(), QStringLiteral("Composition must expose RuntimeUiSnapshotProvider."));
     expect(composition.dataSourceHealthMonitor(), QStringLiteral("Composition must expose DataSourceHealthMonitor."));
     expect(composition.simulatorDataSource(), QStringLiteral("Composition must expose SimulatorDataSource."));
@@ -777,6 +778,62 @@ void runRuntimeUiSnapshotProviderReadsRuntimeStateTests()
     expect(repeated.tags.currentValues.size() == updated.tags.currentValues.size(), QStringLiteral("Stopped runtime snapshot refresh must retain runtime cache values."));
 }
 
+void runRuntimeCommandFacadeControlsRuntimeTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary command facade database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("runtime-command-facade.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize command facade dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    QStringList hostErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&hostErrors),
+        QStringLiteral("Host must start persistence before command facade start: %1")
+            .arg(hostErrors.join(QStringLiteral("; "))));
+
+    QStringList startErrors;
+    expect(
+        composition.runtimeCommandFacade()->start(&startErrors),
+        QStringLiteral("RuntimeCommandFacade must start acquisition runtime: %1")
+            .arg(startErrors.join(QStringLiteral("; "))));
+    for (auto attempt = 0; attempt < 20 && !composition.runtimeLifecycleCoordinator()->isActive(); ++attempt) {
+        QThread::msleep(25);
+    }
+    expect(composition.runtimeLifecycleCoordinator()->isActive(), QStringLiteral("Runtime lifecycle must become active after facade start."));
+
+    QStringList stopErrors;
+    expect(
+        composition.runtimeCommandFacade()->stop(&stopErrors),
+        QStringLiteral("RuntimeCommandFacade must stop acquisition runtime: %1")
+            .arg(stopErrors.join(QStringLiteral("; "))));
+    expect(!composition.runtimeLifecycleCoordinator()->isActive(), QStringLiteral("Runtime lifecycle must become inactive after facade stop."));
+
+    auto options = composition.runtimeOptionsStore()->snapshot();
+    options.uiRefreshIntervalMs = 777;
+    QStringList saveErrors;
+    expect(
+        composition.runtimeCommandFacade()->saveRuntimeOptions(options, &saveErrors),
+        QStringLiteral("RuntimeCommandFacade must save runtime options in memory: %1")
+            .arg(saveErrors.join(QStringLiteral("; "))));
+    expect(
+        composition.runtimeUiSnapshotProvider()->refresh().runtimeOptions.uiRefreshIntervalMs == 777,
+        QStringLiteral("Runtime snapshot provider must read runtime options updated through facade."));
+
+    QStringList shutdownErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&shutdownErrors),
+        QStringLiteral("Host shutdown must flush command facade logs: %1")
+            .arg(shutdownErrors.join(QStringLiteral("; "))));
+}
+
 struct TestCase
 {
     QString name;
@@ -802,7 +859,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
         {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests},
         {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests},
-        {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests}
+        {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests},
+        {QStringLiteral("RuntimeCommandFacadeControlsRuntime"), runRuntimeCommandFacadeControlsRuntimeTests}
     };
 
     auto failed = 0;

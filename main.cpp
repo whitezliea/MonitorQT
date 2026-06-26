@@ -58,7 +58,9 @@ int main(int argc, char *argv[])
         return 3;
     }
 
-    MainWindow w;
+    MainWindow w(
+        runtimeComposition.runtimeCommandFacade(),
+        runtimeComposition.runtimeUiSnapshotProvider());
     w.show();
     const auto exitCode = QApplication::exec();
 

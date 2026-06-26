@@ -100,6 +100,8 @@ set(APPLICATION_SOURCES
     application/services/MeasurementMapService.h
     application/services/OperationLogService.cpp
     application/services/OperationLogService.h
+    application/services/RuntimeCommandFacade.cpp
+    application/services/RuntimeCommandFacade.h
     application/services/RuntimeEventConsumers.cpp
     application/services/RuntimeEventConsumers.h
     application/services/RuntimeUiSnapshotProvider.cpp
