@@ -102,6 +102,8 @@ set(APPLICATION_SOURCES
     application/services/OperationLogService.h
     application/services/RuntimeEventConsumers.cpp
     application/services/RuntimeEventConsumers.h
+    application/services/RuntimeUiSnapshotProvider.cpp
+    application/services/RuntimeUiSnapshotProvider.h
     application/services/TagDefinitionCatalog.cpp
     application/services/TagDefinitionCatalog.h
     application/services/TagService.cpp

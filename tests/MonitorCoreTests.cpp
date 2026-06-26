@@ -587,6 +587,7 @@ void runRuntimeCompositionObjectGraphTests()
     expect(composition.chartDataService(), QStringLiteral("Composition must expose ChartDataService."));
     expect(composition.measurementMapService(), QStringLiteral("Composition must expose MeasurementMapService."));
     expect(composition.operationLogService(), QStringLiteral("Composition must expose OperationLogService."));
+    expect(composition.runtimeUiSnapshotProvider(), QStringLiteral("Composition must expose RuntimeUiSnapshotProvider."));
     expect(composition.dataSourceHealthMonitor(), QStringLiteral("Composition must expose DataSourceHealthMonitor."));
     expect(composition.simulatorDataSource(), QStringLiteral("Composition must expose SimulatorDataSource."));
     expect(composition.monitoringRuntimeService(), QStringLiteral("Composition must expose MonitoringRuntimeService."));
@@ -722,6 +723,60 @@ void runApplicationRuntimeHostLifecycleTests()
     expect(containsLogAction(logs, QStringLiteral("History.RetentionCleanup")), QStringLiteral("Host startup must execute history retention cleanup."));
 }
 
+void runRuntimeUiSnapshotProviderReadsRuntimeStateTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary snapshot database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("runtime-snapshot.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize snapshot provider dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    const auto initial = composition.runtimeUiSnapshotProvider()->refresh();
+    expect(!initial.shell.running, QStringLiteral("Initial runtime snapshot must report stopped acquisition."));
+    expect(initial.shell.databaseConnected, QStringLiteral("Initial runtime snapshot must report initialized database."));
+    expect(initial.shell.lastFrameIndex == 0, QStringLiteral("Initial runtime snapshot must not synthesize a frame index."));
+    expect(initial.tags.currentValues.isEmpty(), QStringLiteral("Initial runtime snapshot must not synthesize tag values."));
+    expect(!initial.measurementMap.has_value(), QStringLiteral("Initial runtime snapshot must not synthesize a measurement map."));
+    expect(initial.tagDefinitions.size() == composition.tagDefinitions().size(), QStringLiteral("Runtime snapshot must expose tag definitions."));
+    expect(initial.tagConfigurations.size() == composition.tagRuntimeConfigurations().size(), QStringLiteral("Runtime snapshot must expose tag runtime configurations."));
+
+    auto frame = createFrame(126, utcTime(60'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.6;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must update snapshot source caches: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+
+    const auto updated = composition.runtimeUiSnapshotProvider()->refresh();
+    expect(!updated.shell.running, QStringLiteral("Direct frame processing must not mark acquisition lifecycle running."));
+    expect(updated.shell.dataSourceConnected, QStringLiteral("Runtime snapshot must reflect online data source health after a real frame."));
+    expect(updated.shell.lastFrameIndex == static_cast<quint64>(frame.sequenceNo), QStringLiteral("Runtime snapshot must report the real latest frame index."));
+    expect(updated.shell.matrixFrameIndex == frame.sequenceNo, QStringLiteral("Runtime snapshot must report the real latest matrix frame index."));
+    expect(!updated.tags.currentValues.isEmpty(), QStringLiteral("Runtime snapshot must read tag cache values."));
+    expect(updated.dashboard.sequenceNo == frame.sequenceNo, QStringLiteral("Dashboard snapshot must be built from runtime tag cache."));
+    expect(!updated.currentAlarms.isEmpty(), QStringLiteral("Runtime snapshot must read current alarms."));
+    expect(!updated.alarmHistory.isEmpty(), QStringLiteral("Runtime snapshot must read recent alarm events."));
+    expect(updated.measurementMap.has_value(), QStringLiteral("Runtime snapshot must read measurement map cache."));
+    expect(updated.measurementMap->sequenceNo == frame.sequenceNo, QStringLiteral("Measurement map snapshot must use real frame sequence."));
+
+    const auto repeated = composition.runtimeUiSnapshotProvider()->refresh();
+    expect(repeated.shell.lastFrameIndex == updated.shell.lastFrameIndex, QStringLiteral("Stopped runtime snapshot refresh must not generate new frames."));
+    expect(repeated.tags.currentValues.size() == updated.tags.currentValues.size(), QStringLiteral("Stopped runtime snapshot refresh must retain runtime cache values."));
+}
+
 struct TestCase
 {
     QString name;
@@ -746,7 +801,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests},
         {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
         {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests},
-        {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests}
+        {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests},
+        {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests}
     };
 
     auto failed = 0;

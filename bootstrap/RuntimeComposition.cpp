@@ -339,6 +339,18 @@ bool RuntimeComposition::initialize(QStringList *errors)
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
                 m_operationLogService.get());
+            m_runtimeUiSnapshotProvider = std::make_unique<Monitor::Application::Services::RuntimeUiSnapshotProvider>(
+                m_runtimeLifecycleCoordinator.get(),
+                m_persistenceRuntimeCoordinator.get(),
+                m_dataSourceHealthMonitor.get(),
+                m_runtimeOptionsStore.get(),
+                m_tagRuntimeConfigurationStore.get(),
+                m_tagService.get(),
+                m_alarmService.get(),
+                m_dashboardService.get(),
+                m_measurementMapService.get(),
+                m_tagDefinitions,
+                m_sqliteConnectionFactory != nullptr);
             m_applicationRuntimeHost = std::make_unique<ApplicationRuntimeHost>(
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
@@ -471,6 +483,11 @@ Monitor::Application::Services::MeasurementMapService *RuntimeComposition::measu
 Monitor::Application::Services::OperationLogService *RuntimeComposition::operationLogService()
 {
     return m_operationLogService.get();
+}
+
+Monitor::Application::Services::RuntimeUiSnapshotProvider *RuntimeComposition::runtimeUiSnapshotProvider()
+{
+    return m_runtimeUiSnapshotProvider.get();
 }
 
 Monitor::Application::Services::TagCacheConsumer *RuntimeComposition::tagCacheConsumer()

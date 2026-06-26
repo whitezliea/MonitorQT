@@ -20,6 +20,7 @@
 #include "application/services/MeasurementMapService.h"
 #include "application/services/OperationLogService.h"
 #include "application/services/RuntimeEventConsumers.h"
+#include "application/services/RuntimeUiSnapshotProvider.h"
 #include "application/services/TagService.h"
 #include "application/workers/BatchPersistWorker.h"
 #include "simulator/adapters/SimulatorDataSource.h"
@@ -81,6 +82,7 @@ public:
     Monitor::Application::Services::ChartDataService *chartDataService();
     Monitor::Application::Services::MeasurementMapService *measurementMapService();
     Monitor::Application::Services::OperationLogService *operationLogService();
+    Monitor::Application::Services::RuntimeUiSnapshotProvider *runtimeUiSnapshotProvider();
     Monitor::Application::Services::TagCacheConsumer *tagCacheConsumer();
     Monitor::Application::Services::MeasurementMapFrameConsumer *measurementMapFrameConsumer();
     Monitor::Application::Services::HistoryRuntimeStateConsumer *historyRuntimeStateConsumer();
@@ -128,6 +130,7 @@ private:
     std::unique_ptr<Monitor::Application::Queues::AlarmEventQueue> m_alarmEventQueue;
     std::unique_ptr<Monitor::Application::Queues::OperationLogQueue> m_operationLogQueue;
     std::unique_ptr<Monitor::Application::Services::OperationLogService> m_operationLogService;
+    std::unique_ptr<Monitor::Application::Services::RuntimeUiSnapshotProvider> m_runtimeUiSnapshotProvider;
     std::unique_ptr<Monitor::Application::Services::TagCacheConsumer> m_tagCacheConsumer;
     std::unique_ptr<Monitor::Application::Services::MeasurementMapFrameConsumer> m_measurementMapFrameConsumer;
     std::unique_ptr<Monitor::Application::Services::HistoryRuntimeStateConsumer> m_historyRuntimeStateConsumer;
