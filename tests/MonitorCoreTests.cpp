@@ -728,6 +728,146 @@ void runApplicationRuntimeHostLifecycleTests()
     expect(containsLogAction(logs, QStringLiteral("History.RetentionCleanup")), QStringLiteral("Host startup must execute history retention cleanup."));
 }
 
+void runRuntimeStartStopFlushesHistoryTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary start-stop database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("runtime-start-stop.db"));
+    dependencies.runtimeOptions.dataGenerateIntervalMs = 25;
+    dependencies.runtimeOptions.dataSourceTimeoutPeriods = 2;
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize start-stop dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    QStringList hostErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&hostErrors),
+        QStringLiteral("Host must start persistence before runtime start-stop test: %1")
+            .arg(hostErrors.join(QStringLiteral("; "))));
+
+    const auto queryStartUtc = QDateTime::currentDateTimeUtc().addSecs(-2);
+    QStringList startErrors;
+    expect(
+        composition.runtimeCommandFacade()->start(&startErrors),
+        QStringLiteral("RuntimeCommandFacade must start real acquisition runtime: %1")
+            .arg(startErrors.join(QStringLiteral("; "))));
+
+    for (auto attempt = 0; attempt < 40 && composition.runtimeUiSnapshotProvider()->refresh().shell.lastFrameIndex == 0; ++attempt) {
+        QThread::msleep(25);
+    }
+    const auto runningSnapshot = composition.runtimeUiSnapshotProvider()->refresh();
+    expect(runningSnapshot.shell.lastFrameIndex > 0, QStringLiteral("Started runtime must produce at least one real simulator frame."));
+    expect(runningSnapshot.shell.running, QStringLiteral("Snapshot must show acquisition running while runtime is active."));
+
+    QStringList stopErrors;
+    expect(
+        composition.runtimeCommandFacade()->stop(&stopErrors),
+        QStringLiteral("RuntimeCommandFacade must stop real acquisition runtime: %1")
+            .arg(stopErrors.join(QStringLiteral("; "))));
+    const auto queryEndUtc = QDateTime::currentDateTimeUtc().addSecs(2);
+
+    const auto historyPage = composition.historyQueryService()->query(
+        Monitor::Application::Services::HistoryQueryRequest{
+            QStringLiteral("MEAS.TEMP.CH01"),
+            queryStartUtc,
+            queryEndUtc,
+            1,
+            20,
+            true
+        });
+    expect(historyPage.totalCount > 0, QStringLiteral("Runtime stop must flush generated history samples to SQLite."));
+    expect(!composition.runtimeLifecycleCoordinator()->isActive(), QStringLiteral("Runtime lifecycle must be inactive after stop."));
+
+    QStringList shutdownErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&shutdownErrors),
+        QStringLiteral("Host shutdown must complete after runtime start-stop test: %1")
+            .arg(shutdownErrors.join(QStringLiteral("; "))));
+}
+
+void runAlarmAcknowledgePersistsEventAndLogTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary acknowledge database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("alarm-acknowledge.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize acknowledge dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    QStringList hostErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&hostErrors),
+        QStringLiteral("Host must start persistence before acknowledge test: %1")
+            .arg(hostErrors.join(QStringLiteral("; "))));
+
+    auto frame = createFrame(252, utcTime(100'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.8;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must raise an alarm before acknowledge: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+    const auto activeAlarm = findAlarm(composition.alarmService()->currentAlarms(), QStringLiteral("MEAS.VIBRATION.CH01"));
+    expect(activeAlarm != nullptr, QStringLiteral("High vibration frame must create an active alarm."));
+    const auto alarmId = activeAlarm->alarmId;
+
+    QStringList acknowledgeErrors;
+    expect(
+        composition.runtimeCommandFacade()->acknowledgeAlarm(alarmId, &acknowledgeErrors),
+        QStringLiteral("RuntimeCommandFacade must acknowledge real alarm: %1")
+            .arg(acknowledgeErrors.join(QStringLiteral("; "))));
+
+    QStringList shutdownErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&shutdownErrors),
+        QStringLiteral("Host shutdown must flush acknowledged alarm and log: %1")
+            .arg(shutdownErrors.join(QStringLiteral("; "))));
+
+    const auto acknowledgedPage = composition.alarmQueryService()->query(
+        Monitor::Application::Services::AlarmHistoryQueryRequest{
+            frame.timestampUtc.addMSecs(-1),
+            frame.timestampUtc.addMSecs(1),
+            QStringLiteral("MEAS.VIBRATION.CH01"),
+            std::nullopt,
+            Monitor::Domain::Alarms::AlarmState::Acknowledged,
+            1,
+            10,
+            false
+        });
+    expect(acknowledgedPage.totalCount == 1, QStringLiteral("Acknowledged alarm must be queryable from SQLite."));
+    expect(acknowledgedPage.items.first().alarmId == alarmId, QStringLiteral("Persisted acknowledged alarm must keep the original alarm id."));
+
+    const auto nowUtc = QDateTime::currentDateTimeUtc();
+    const auto logPage = composition.operationLogQueryService()->query(
+        Monitor::Application::Services::OperationLogQueryRequest{
+            nowUtc.addDays(-1),
+            nowUtc.addDays(1),
+            std::nullopt,
+            QStringLiteral("Acknowledged"),
+            1,
+            20
+        });
+    expect(containsLogAction(logPage.items, QStringLiteral("Alarm.Acknowledged")),
+           QStringLiteral("Acknowledging an alarm must persist an operation log."));
+}
+
 void runPageQueryServicesReadSqliteTests()
 {
     QTemporaryDir directory;
@@ -860,6 +1000,207 @@ void runRuntimeUiSnapshotProviderReadsRuntimeStateTests()
     const auto repeated = composition.runtimeUiSnapshotProvider()->refresh();
     expect(repeated.shell.lastFrameIndex == updated.shell.lastFrameIndex, QStringLiteral("Stopped runtime snapshot refresh must not generate new frames."));
     expect(repeated.tags.currentValues.size() == updated.tags.currentValues.size(), QStringLiteral("Stopped runtime snapshot refresh must retain runtime cache values."));
+}
+
+void runOfflineTimeoutVisibleInSnapshotTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary offline snapshot database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("offline-timeout.db"));
+    dependencies.runtimeOptions.dataGenerateIntervalMs = 1;
+    dependencies.runtimeOptions.dataSourceTimeoutPeriods = 2;
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize offline timeout dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    const auto frame = createFrame(294, utcTime(120'000));
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must seed health monitor before timeout: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+
+    QThread::msleep(10);
+    QStringList timeoutErrors;
+    expect(
+        composition.monitoringRuntimeService()->publishOfflineStatesIfTimedOut(QDateTime::currentDateTimeUtc(), &timeoutErrors),
+        QStringLiteral("Runtime must publish offline states after timeout: %1")
+            .arg(timeoutErrors.join(QStringLiteral("; "))));
+
+    const auto snapshot = composition.runtimeUiSnapshotProvider()->refresh();
+    expect(snapshot.shell.syncState == QStringLiteral("TimedOut"), QStringLiteral("Snapshot shell sync state must expose data source timeout."));
+    expect(!snapshot.shell.dataSourceConnected, QStringLiteral("Snapshot must mark data source disconnected after timeout."));
+    const auto offlineIt = std::find_if(
+        snapshot.tags.currentValues.cbegin(),
+        snapshot.tags.currentValues.cend(),
+        [](const auto &state) {
+            return state.quality == Monitor::Domain::Tags::TagQuality::Offline;
+        });
+    expect(offlineIt != snapshot.tags.currentValues.cend(), QStringLiteral("Snapshot tag values must show Offline quality after timeout."));
+}
+
+void runHistoryAlarmLogQueryPaginationTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary pagination database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("query-pagination.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize pagination query dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    const auto now = utcTime(150'000);
+    composition.historyRepository()->append({
+        TagValue{QStringLiteral("TAG.PAGE"), 1.0, now, TagQuality::Good, TagAlarmState::Normal, QStringLiteral("page-1"), 1},
+        TagValue{QStringLiteral("TAG.PAGE"), 2.0, now.addMSecs(1), TagQuality::Good, TagAlarmState::WarningHigh, QStringLiteral("page-2"), 2},
+        TagValue{QStringLiteral("TAG.PAGE"), 3.0, now.addMSecs(2), TagQuality::Good, TagAlarmState::AlarmHigh, QStringLiteral("page-3"), 3}
+    });
+
+    QVector<AlarmEvent> alarms;
+    alarms.reserve(3);
+    for (auto index = 0; index < 3; ++index) {
+        AlarmEvent alarm;
+        alarm.alarmId = QUuid::createUuid();
+        alarm.tagId = QStringLiteral("TAG.PAGE");
+        alarm.level = AlarmLevel::Alarm;
+        alarm.state = AlarmState::Active;
+        alarm.triggerValue = 10.0 + index;
+        alarm.triggerTimeUtc = now.addMSecs(index);
+        alarm.message = QStringLiteral("Paged alarm %1").arg(index + 1);
+        alarm.alarmType = TagAlarmState::AlarmHigh;
+        alarm.lastUpdatedTimeUtc = alarm.triggerTimeUtc;
+        alarms.append(alarm);
+    }
+    composition.alarmRepository()->append(alarms);
+
+    composition.operationLogRepository()->append({
+        Monitor::Domain::Logs::OperationLog{
+            now,
+            Monitor::Domain::Logs::OperationLogLevel::Info,
+            QStringLiteral("Page"),
+            QStringLiteral("Page log 1"),
+            QStringLiteral("Page.Query.1"),
+            QStringLiteral("test"),
+            QStringLiteral("detail-1"),
+            QStringLiteral("page-1"),
+            0
+        },
+        Monitor::Domain::Logs::OperationLog{
+            now.addMSecs(1),
+            Monitor::Domain::Logs::OperationLogLevel::Info,
+            QStringLiteral("Page"),
+            QStringLiteral("Page log 2"),
+            QStringLiteral("Page.Query.2"),
+            QStringLiteral("test"),
+            QStringLiteral("detail-2"),
+            QStringLiteral("page-2"),
+            0
+        },
+        Monitor::Domain::Logs::OperationLog{
+            now.addMSecs(2),
+            Monitor::Domain::Logs::OperationLogLevel::Info,
+            QStringLiteral("Page"),
+            QStringLiteral("Page log 3"),
+            QStringLiteral("Page.Query.3"),
+            QStringLiteral("test"),
+            QStringLiteral("detail-3"),
+            QStringLiteral("page-3"),
+            0
+        }
+    });
+
+    const auto historyFirst = composition.historyQueryService()->query(
+        Monitor::Application::Services::HistoryQueryRequest{
+            QStringLiteral("TAG.PAGE"),
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            1,
+            2,
+            true
+        });
+    expect(historyFirst.items.size() == 2, QStringLiteral("History page 1 must honor page size."));
+    expect(historyFirst.totalCount == 3, QStringLiteral("History page 1 must report total count."));
+    expect(!historyFirst.hasPreviousPage() && historyFirst.hasNextPage(), QStringLiteral("History page 1 must expose next-page state."));
+    expectNear(historyFirst.items.first().value, 3.0, 0.0001, QStringLiteral("History page 1 must sort newest sample first."));
+
+    const auto historySecond = composition.historyQueryService()->query(
+        Monitor::Application::Services::HistoryQueryRequest{
+            QStringLiteral("TAG.PAGE"),
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            2,
+            2,
+            true
+        });
+    expect(historySecond.items.size() == 1, QStringLiteral("History page 2 must contain remaining row."));
+    expect(historySecond.hasPreviousPage() && !historySecond.hasNextPage(), QStringLiteral("History page 2 must expose previous-page state only."));
+
+    const auto alarmFirst = composition.alarmQueryService()->query(
+        Monitor::Application::Services::AlarmHistoryQueryRequest{
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            QStringLiteral("TAG.PAGE"),
+            std::nullopt,
+            std::nullopt,
+            1,
+            2,
+            false
+        });
+    expect(alarmFirst.items.size() == 2, QStringLiteral("Alarm page 1 must honor page size."));
+    expect(alarmFirst.totalCount == 3, QStringLiteral("Alarm page 1 must report total count."));
+    expect(!alarmFirst.hasPreviousPage() && alarmFirst.hasNextPage(), QStringLiteral("Alarm page 1 must expose next-page state."));
+    expectNear(alarmFirst.items.first().triggerValue, 12.0, 0.0001, QStringLiteral("Alarm page 1 must sort newest alarm first."));
+
+    const auto alarmSecond = composition.alarmQueryService()->query(
+        Monitor::Application::Services::AlarmHistoryQueryRequest{
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            QStringLiteral("TAG.PAGE"),
+            std::nullopt,
+            std::nullopt,
+            2,
+            2,
+            false
+        });
+    expect(alarmSecond.items.size() == 1, QStringLiteral("Alarm page 2 must contain remaining row."));
+    expect(alarmSecond.hasPreviousPage() && !alarmSecond.hasNextPage(), QStringLiteral("Alarm page 2 must expose previous-page state only."));
+
+    const auto logFirst = composition.operationLogQueryService()->query(
+        Monitor::Application::Services::OperationLogQueryRequest{
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            Monitor::Domain::Logs::OperationLogLevel::Info,
+            QStringLiteral("Page"),
+            1,
+            2
+        });
+    expect(logFirst.items.size() == 2, QStringLiteral("Log page 1 must honor page size."));
+    expect(logFirst.totalCount == 3, QStringLiteral("Log page 1 must report total count."));
+    expect(!logFirst.hasPreviousPage() && logFirst.hasNextPage(), QStringLiteral("Log page 1 must expose next-page state."));
+    expect(logFirst.items.first().action == QStringLiteral("Page.Query.3"), QStringLiteral("Log page 1 must sort newest log first."));
+
+    const auto logSecond = composition.operationLogQueryService()->query(
+        Monitor::Application::Services::OperationLogQueryRequest{
+            now.addMSecs(-1),
+            now.addMSecs(5),
+            Monitor::Domain::Logs::OperationLogLevel::Info,
+            QStringLiteral("Query.1"),
+            1,
+            10
+        });
+    expect(logSecond.items.size() == 1, QStringLiteral("Log query must support action text filtering."));
+    expect(logSecond.items.first().action == QStringLiteral("Page.Query.1"), QStringLiteral("Log action filter must return the matching action."));
 }
 
 void runRuntimeCommandFacadeControlsRuntimeTests()
@@ -1056,11 +1397,15 @@ int main(int argc, char *argv[])
         {QStringLiteral("SqliteRepositories"), runSqliteRepositoryTests},
         {QStringLiteral("CsvExport"), runCsvExportTests},
         {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests},
-        {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
+        {QStringLiteral("RuntimeCompositionBuildsFullObjectGraph"), runRuntimeCompositionObjectGraphTests},
         {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests},
         {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests},
+        {QStringLiteral("RuntimeStartStopFlushesHistory"), runRuntimeStartStopFlushesHistoryTests},
+        {QStringLiteral("AlarmAcknowledgePersistsEventAndLog"), runAlarmAcknowledgePersistsEventAndLogTests},
         {QStringLiteral("PageQueryServicesReadSqlite"), runPageQueryServicesReadSqliteTests},
         {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests},
+        {QStringLiteral("OfflineTimeoutVisibleInSnapshot"), runOfflineTimeoutVisibleInSnapshotTests},
+        {QStringLiteral("HistoryAlarmLogQueryPagination"), runHistoryAlarmLogQueryPaginationTests},
         {QStringLiteral("RuntimeCommandFacadeControlsRuntime"), runRuntimeCommandFacadeControlsRuntimeTests},
         {QStringLiteral("SettingsSaveReloadsFromSqlite"), runSettingsSaveReloadsFromSqliteTests}
     };

@@ -72,7 +72,7 @@ MainWindow::MainWindow(
     setRunningState(false);
     refreshShellClock();
     m_navigationService->navigateTo(NavigationPage::Dashboard);
-    m_shellTimer->start(defaultRuntimeOptions().uiRefreshIntervalMs);
+    m_shellTimer->start();
 }
 
 MainWindow::~MainWindow() = default;
