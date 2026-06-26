@@ -1,0 +1,5 @@
+cmake --build build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug --target all
+$env:PATH = 'C:\Qt\6.11.1\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;' + $env:PATH
+$build = (Resolve-Path 'build\Desktop_Qt_6_11_1_MinGW_64_bit_Debug').Path
+$exe = Join-Path $build 'MonitorQT.exe'
+$p = Start-Process -FilePath $exe -PassThru
