@@ -51,7 +51,22 @@ int main(int argc, char *argv[])
         return 3;
     }
 
+    QStringList hostErrors;
+    if (!runtimeComposition.applicationRuntimeHost()->start(&hostErrors)) {
+        qCritical().noquote() << "Application runtime host startup failed:"
+                              << hostErrors.join(QStringLiteral("; "));
+        return 3;
+    }
+
     MainWindow w;
     w.show();
-    return QApplication::exec();
+    const auto exitCode = QApplication::exec();
+
+    QStringList shutdownErrors;
+    if (!runtimeComposition.applicationRuntimeHost()->stop(&shutdownErrors)) {
+        qWarning().noquote() << "Application runtime host shutdown completed with errors:"
+                             << shutdownErrors.join(QStringLiteral("; "));
+    }
+
+    return exitCode;
 }

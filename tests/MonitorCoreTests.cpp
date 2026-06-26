@@ -142,6 +142,15 @@ const AlarmEvent *findAlarm(const QVector<AlarmEvent> &alarms, const QString &ta
     return it == alarms.cend() ? nullptr : &(*it);
 }
 
+bool containsLogAction(
+    const QVector<Monitor::Domain::Logs::OperationLog> &logs,
+    const QString &action)
+{
+    return std::any_of(logs.cbegin(), logs.cend(), [&action](const auto &log) {
+        return log.action == action;
+    });
+}
+
 RawMeasurementFrame createFrame(qint64 sequenceNo, const QDateTime &timestampUtc)
 {
     RawMeasurementFrame frame;
@@ -653,6 +662,66 @@ void runEventBusHandlersDriveRuntimeConsumersTests()
     expect(composition.operationLogQueue()->size() > logQueueSizeBeforeAcknowledge, QStringLiteral("AlarmOperationLogConsumer must enqueue acknowledged operation log."));
 }
 
+void runApplicationRuntimeHostLifecycleTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary host database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("application-host.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize host dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+    expect(composition.applicationRuntimeHost(), QStringLiteral("Composition must expose ApplicationRuntimeHost."));
+
+    QStringList startErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&startErrors),
+        QStringLiteral("ApplicationRuntimeHost must start persistence runtime: %1")
+            .arg(startErrors.join(QStringLiteral("; "))));
+    expect(composition.applicationRuntimeHost()->isStarted(), QStringLiteral("ApplicationRuntimeHost must report started."));
+    expect(composition.persistenceRuntimeCoordinator()->isRunning(), QStringLiteral("Persistence runtime must be running after host start."));
+
+    auto frame = createFrame(84, utcTime(40'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.4;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must succeed while host persistence is running: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+
+    QStringList stopErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&stopErrors),
+        QStringLiteral("ApplicationRuntimeHost must stop and flush cleanly: %1")
+            .arg(stopErrors.join(QStringLiteral("; "))));
+    expect(!composition.applicationRuntimeHost()->isStarted(), QStringLiteral("ApplicationRuntimeHost must report stopped."));
+    expect(!composition.persistenceRuntimeCoordinator()->isRunning(), QStringLiteral("Persistence runtime must be stopped after host shutdown."));
+    expect(composition.historySampleQueue()->size() == 0, QStringLiteral("Host shutdown must drain history queue."));
+    expect(composition.alarmEventQueue()->size() == 0, QStringLiteral("Host shutdown must drain alarm queue."));
+    expect(composition.operationLogQueue()->size() == 0, QStringLiteral("Host shutdown must drain operation log queue."));
+
+    const auto history = composition.historyRepository()->query(
+        QStringLiteral("MEAS.VIBRATION.CH01"),
+        frame.timestampUtc.addMSecs(-1),
+        frame.timestampUtc.addMSecs(1));
+    expect(!history.isEmpty(), QStringLiteral("Host shutdown must persist queued history samples."));
+    expect(!composition.alarmRepository()->queryLatest(10).isEmpty(), QStringLiteral("Host shutdown must persist queued alarm events."));
+    const auto logs = composition.operationLogRepository()->queryLatest(50);
+    expect(containsLogAction(logs, QStringLiteral("Alarm.Raised")), QStringLiteral("Host shutdown must persist alarm operation logs."));
+    expect(containsLogAction(logs, QStringLiteral("ApplicationRuntimeHost.Stopping")), QStringLiteral("Host shutdown must persist application stop log."));
+    expect(containsLogAction(logs, QStringLiteral("History.RetentionCleanup")), QStringLiteral("Host startup must execute history retention cleanup."));
+}
+
 struct TestCase
 {
     QString name;
@@ -676,7 +745,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("CsvExport"), runCsvExportTests},
         {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests},
         {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
-        {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests}
+        {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests},
+        {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests}
     };
 
     auto failed = 0;

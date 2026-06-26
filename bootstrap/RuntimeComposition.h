@@ -1,6 +1,7 @@
 #ifndef RUNTIMECOMPOSITION_H
 #define RUNTIMECOMPOSITION_H
 
+#include "ApplicationRuntimeHost.h"
 #include "RuntimeCompositionDependencies.h"
 
 #include "application/configuration/RuntimeOptionsStore.h"
@@ -98,6 +99,7 @@ public:
     Monitor::Application::Runtime::PersistenceRuntimeCoordinator *persistenceRuntimeCoordinator();
     Monitor::Application::Runtime::RuntimeLifecycleCoordinator *runtimeLifecycleCoordinator();
     Monitor::Application::Runtime::AcquisitionRuntimeController *acquisitionRuntimeController();
+    ApplicationRuntimeHost *applicationRuntimeHost();
     QStringList layerTargetNames() const;
     QStringList registeredConsumerNames() const;
 
@@ -141,6 +143,7 @@ private:
     std::unique_ptr<Monitor::Application::Runtime::PersistenceRuntimeCoordinator> m_persistenceRuntimeCoordinator;
     std::unique_ptr<Monitor::Application::Runtime::RuntimeLifecycleCoordinator> m_runtimeLifecycleCoordinator;
     std::unique_ptr<Monitor::Application::Runtime::AcquisitionRuntimeController> m_acquisitionRuntimeController;
+    std::unique_ptr<ApplicationRuntimeHost> m_applicationRuntimeHost;
     QStringList m_layerTargetNames;
     bool m_initialized = false;
 };

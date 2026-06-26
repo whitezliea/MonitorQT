@@ -339,6 +339,11 @@ bool RuntimeComposition::initialize(QStringList *errors)
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
                 m_operationLogService.get());
+            m_applicationRuntimeHost = std::make_unique<ApplicationRuntimeHost>(
+                m_runtimeLifecycleCoordinator.get(),
+                m_persistenceRuntimeCoordinator.get(),
+                m_historyRetentionService.get(),
+                m_operationLogService.get());
         } catch (const std::exception &exception) {
             errors->append(QStringLiteral("Runtime object graph initialization failed: %1").arg(QString::fromUtf8(exception.what())));
         }
@@ -556,6 +561,11 @@ Monitor::Application::Runtime::RuntimeLifecycleCoordinator *RuntimeComposition::
 Monitor::Application::Runtime::AcquisitionRuntimeController *RuntimeComposition::acquisitionRuntimeController()
 {
     return m_acquisitionRuntimeController.get();
+}
+
+ApplicationRuntimeHost *RuntimeComposition::applicationRuntimeHost()
+{
+    return m_applicationRuntimeHost.get();
 }
 
 QStringList RuntimeComposition::layerTargetNames() const

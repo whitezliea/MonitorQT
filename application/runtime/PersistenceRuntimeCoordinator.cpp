@@ -69,6 +69,11 @@ bool PersistenceRuntimeCoordinator::flushHistory()
     return flushWorker(QStringLiteral("History"));
 }
 
+bool PersistenceRuntimeCoordinator::flushAlarms()
+{
+    return flushWorker(QStringLiteral("Alarm"));
+}
+
 bool PersistenceRuntimeCoordinator::flushOperationLogs()
 {
     return flushWorker(QStringLiteral("OperationLog"));

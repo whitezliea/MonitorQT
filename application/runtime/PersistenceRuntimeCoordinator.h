@@ -31,6 +31,7 @@ public:
     bool stop();
     bool flushWorker(const QString &workerName);
     bool flushHistory();
+    bool flushAlarms();
     bool flushOperationLogs();
     bool isRunning() const;
     PersistenceRuntimeStatus status() const;

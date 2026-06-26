@@ -180,6 +180,8 @@ set(PRESENTATION_SOURCES
 )
 
 set(BOOTSTRAP_SOURCES
+    bootstrap/ApplicationRuntimeHost.cpp
+    bootstrap/ApplicationRuntimeHost.h
     bootstrap/EventRegistration.cpp
     bootstrap/EventRegistration.h
     bootstrap/RuntimeComposition.cpp
