@@ -249,6 +249,64 @@ bool RuntimeComposition::initialize(QStringList *errors)
             m_operationLogQueue = std::make_unique<Monitor::Application::Queues::OperationLogQueue>();
             m_operationLogService = std::make_unique<Monitor::Application::Services::OperationLogService>(
                 m_operationLogQueue.get());
+            m_historyQueryService = std::make_unique<Monitor::Application::Services::HistoryQueryService>(
+                [this](const Monitor::Application::Services::HistoryQueryRequest &request) {
+                    const auto result = m_historyRepository->query(Monitor::Infrastructure::Persistence::HistoryQuery{
+                        request.tagId,
+                        request.startTimeUtc,
+                        request.endTimeUtc,
+                        request.page,
+                        request.pageSize,
+                        request.descending
+                            ? Monitor::Infrastructure::Persistence::HistorySortDirection::Descending
+                            : Monitor::Infrastructure::Persistence::HistorySortDirection::Ascending
+                    });
+                    return Monitor::Application::Services::HistoryQueryPage{
+                        result.items,
+                        result.totalCount,
+                        result.page,
+                        result.pageSize
+                    };
+                });
+            m_alarmQueryService = std::make_unique<Monitor::Application::Services::AlarmQueryService>(
+                [this](const Monitor::Application::Services::AlarmHistoryQueryRequest &request) {
+                    const auto result = m_alarmRepository->query(Monitor::Infrastructure::Persistence::AlarmQuery{
+                        request.startTimeUtc,
+                        request.endTimeUtc,
+                        request.tagId,
+                        request.level,
+                        request.state,
+                        request.page,
+                        request.pageSize,
+                        request.ascending
+                            ? Monitor::Infrastructure::Persistence::AlarmSortDirection::Ascending
+                            : Monitor::Infrastructure::Persistence::AlarmSortDirection::Descending
+                    });
+                    return Monitor::Application::Services::AlarmHistoryQueryPage{
+                        result.items,
+                        result.totalCount,
+                        result.page,
+                        result.pageSize
+                    };
+                });
+            m_operationLogQueryService = std::make_unique<Monitor::Application::Services::OperationLogQueryService>(
+                [this](const Monitor::Application::Services::OperationLogQueryRequest &request) {
+                    const auto result = m_operationLogRepository->queryPage(Monitor::Domain::Logs::OperationLogQuery{
+                        request.startTimeUtc,
+                        request.endTimeUtc,
+                        request.level,
+                        request.categoryText,
+                        request.pageSize,
+                        request.page,
+                        request.pageSize
+                    });
+                    return Monitor::Application::Services::OperationLogQueryPage{
+                        result.items,
+                        result.totalCount,
+                        result.page,
+                        result.pageSize
+                    };
+                });
             m_tagCacheConsumer = std::make_unique<Monitor::Application::Services::TagCacheConsumer>(
                 m_tagService.get());
             m_measurementMapFrameConsumer = std::make_unique<Monitor::Application::Services::MeasurementMapFrameConsumer>(
@@ -490,6 +548,21 @@ Monitor::Application::Services::MeasurementMapService *RuntimeComposition::measu
 Monitor::Application::Services::OperationLogService *RuntimeComposition::operationLogService()
 {
     return m_operationLogService.get();
+}
+
+Monitor::Application::Services::HistoryQueryService *RuntimeComposition::historyQueryService()
+{
+    return m_historyQueryService.get();
+}
+
+Monitor::Application::Services::AlarmQueryService *RuntimeComposition::alarmQueryService()
+{
+    return m_alarmQueryService.get();
+}
+
+Monitor::Application::Services::OperationLogQueryService *RuntimeComposition::operationLogQueryService()
+{
+    return m_operationLogQueryService.get();
 }
 
 Monitor::Application::Services::RuntimeCommandFacade *RuntimeComposition::runtimeCommandFacade()

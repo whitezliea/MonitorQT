@@ -985,20 +985,33 @@ void AlarmCenterPageWidget::applyHistoryFilter()
 {
     constexpr auto PageSize = 100;
     const auto filter = m_historyFilterEdit->text().trimmed();
-    QVector<AlarmEvent> alarms;
-    for (const auto &alarm : m_snapshot.alarmHistory) {
-        if (!filter.isEmpty() && !alarm.tagId.contains(filter, Qt::CaseInsensitive) && !alarm.message.contains(filter, Qt::CaseInsensitive)) {
-            continue;
-        }
-        alarms.append(alarm);
-    }
-    const auto totalPages = std::max(1, static_cast<int>(std::ceil(alarms.size() / static_cast<double>(PageSize))));
-    m_historyPage = std::clamp(m_historyPage, 1, totalPages);
-    const auto start = static_cast<qsizetype>((m_historyPage - 1) * PageSize);
-    const auto visibleRows = static_cast<int>(std::max<qsizetype>(0, std::min<qsizetype>(PageSize, alarms.size() - start)));
-    m_historyTable->setRowCount(visibleRows);
+    const auto nowUtc = QDateTime::currentDateTimeUtc();
+    emit alarmHistoryQueryRequested(Monitor::Application::Services::AlarmHistoryQueryRequest{
+        nowUtc.addDays(-30),
+        nowUtc.addSecs(1),
+        filter.isEmpty() ? std::optional<QString>() : std::optional<QString>(filter),
+        std::nullopt,
+        std::nullopt,
+        m_historyPage,
+        PageSize,
+        false
+    });
+}
+
+void AlarmCenterPageWidget::setAlarmHistoryResult(const Monitor::Application::Services::AlarmHistoryQueryPage &result)
+{
+    m_alarmHistoryPage = result;
+    m_historyPage = result.page;
+    renderAlarmHistory();
+}
+
+void AlarmCenterPageWidget::renderAlarmHistory()
+{
+    const auto pageSize = std::max(1, m_alarmHistoryPage.pageSize);
+    const auto totalPages = std::max<qint64>(1, (m_alarmHistoryPage.totalCount + pageSize - 1) / pageSize);
+    m_historyTable->setRowCount(m_alarmHistoryPage.items.size());
     for (auto row = 0; row < m_historyTable->rowCount(); ++row) {
-        const auto &alarm = alarms.at(start + row);
+        const auto &alarm = m_alarmHistoryPage.items.at(row);
         m_historyTable->setItem(row, 0, item(localTime(alarm.triggerTimeUtc)));
         m_historyTable->setItem(row, 1, item(alarm.tagId));
         m_historyTable->setItem(row, 2, item(Monitor::Domain::Alarms::toString(alarm.level)));
@@ -1006,9 +1019,12 @@ void AlarmCenterPageWidget::applyHistoryFilter()
         m_historyTable->setItem(row, 4, numericItem(alarm.triggerValue));
         m_historyTable->setItem(row, 5, item(alarm.message));
     }
-    m_previousHistoryButton->setEnabled(m_historyPage > 1);
-    m_nextHistoryButton->setEnabled(m_historyPage < totalPages);
-    m_historyPageLabel->setText(tr("Page %1 / %2 (%3 alarms)").arg(m_historyPage).arg(totalPages).arg(alarms.size()));
+    m_previousHistoryButton->setEnabled(m_alarmHistoryPage.hasPreviousPage());
+    m_nextHistoryButton->setEnabled(m_alarmHistoryPage.hasNextPage());
+    m_historyPageLabel->setText(tr("Page %1 / %2 (%3 alarms)")
+                                    .arg(m_alarmHistoryPage.page)
+                                    .arg(totalPages)
+                                    .arg(m_alarmHistoryPage.totalCount));
 }
 
 void AlarmCenterPageWidget::previousHistoryPage()
@@ -1084,7 +1100,7 @@ void HistoryPageWidget::rebuildTagList(const UiSnapshot &snapshot)
     }
     const QSignalBlocker blocker(m_tagCombo);
     m_tagCombo->clear();
-    m_tagCombo->addItem(tr("All Tags"), QString());
+    m_tagCombo->addItem(tr("Select Tag"), QString());
     for (const auto &definition : snapshot.tagDefinitions) {
         m_tagCombo->addItem(QStringLiteral("%1 (%2)").arg(definition.displayName, definition.tagId), definition.tagId);
     }
@@ -1100,23 +1116,35 @@ void HistoryPageWidget::applyQuery()
         return;
     }
 
-    QVector<TagValue> samples;
     const auto tagId = m_tagCombo->currentData().toString();
-    for (auto it = m_snapshot.historySamples.crbegin(); it != m_snapshot.historySamples.crend(); ++it) {
-        if (!tagId.isEmpty() && it->tagId != tagId) {
-            continue;
-        }
-        samples.append(*it);
+    if (tagId.isEmpty()) {
+        m_table->setRowCount(0);
+        m_previousButton->setEnabled(false);
+        m_nextButton->setEnabled(false);
+        m_pageLabel->setText(tr("Select a tag to query SQLite history"));
+        return;
     }
 
+    const auto nowUtc = QDateTime::currentDateTimeUtc();
+    emit historyQueryRequested(Monitor::Application::Services::HistoryQueryRequest{
+        tagId,
+        nowUtc.addDays(-1),
+        nowUtc.addSecs(1),
+        m_currentPage,
+        m_limitSpin->value(),
+        true
+    });
+}
+
+void HistoryPageWidget::setHistoryQueryResult(const Monitor::Application::Services::HistoryQueryPage &result)
+{
+    m_historyPage = result;
+    m_currentPage = result.page;
     const auto pageSize = m_limitSpin->value();
-    const auto totalPages = std::max(1, static_cast<int>(std::ceil(samples.size() / static_cast<double>(pageSize))));
-    m_currentPage = std::clamp(m_currentPage, 1, totalPages);
-    const auto start = static_cast<qsizetype>((m_currentPage - 1) * pageSize);
-    const auto visibleRows = static_cast<int>(std::max<qsizetype>(0, std::min<qsizetype>(pageSize, samples.size() - start)));
-    m_table->setRowCount(visibleRows);
-    for (auto row = 0; row < visibleRows; ++row) {
-        const auto &sample = samples.at(start + row);
+    const auto totalPages = std::max<qint64>(1, (m_historyPage.totalCount + pageSize - 1) / pageSize);
+    m_table->setRowCount(m_historyPage.items.size());
+    for (auto row = 0; row < m_historyPage.items.size(); ++row) {
+        const auto &sample = m_historyPage.items.at(row);
         m_table->setItem(row, 0, item(localTime(sample.timestampUtc)));
         m_table->setItem(row, 1, item(sample.tagId));
         m_table->setItem(row, 2, item(sampleValueText(sample)));
@@ -1124,9 +1152,12 @@ void HistoryPageWidget::applyQuery()
         m_table->setItem(row, 4, item(Monitor::Domain::Tags::toString(sample.alarmState)));
         m_table->setItem(row, 5, item(sample.source));
     }
-    m_previousButton->setEnabled(m_currentPage > 1);
-    m_nextButton->setEnabled(m_currentPage < totalPages);
-    m_pageLabel->setText(tr("Page %1 / %2 (%3 samples)").arg(m_currentPage).arg(totalPages).arg(samples.size()));
+    m_previousButton->setEnabled(m_historyPage.hasPreviousPage());
+    m_nextButton->setEnabled(m_historyPage.hasNextPage());
+    m_pageLabel->setText(tr("Page %1 / %2 (%3 samples)")
+                             .arg(m_historyPage.page)
+                             .arg(totalPages)
+                             .arg(m_historyPage.totalCount));
 }
 
 void HistoryPageWidget::previousPage()
@@ -1453,26 +1484,26 @@ void LogsSettingsPageWidget::applyLogFilter()
 
     const auto levelFilter = m_logLevelCombo->currentData().toInt();
     const auto textFilter = m_logCategoryEdit->text().trimmed();
-    QVector<Monitor::Domain::Logs::OperationLog> rows;
-    rows.reserve(m_snapshot.operationLogs.size());
-    for (const auto &log : m_snapshot.operationLogs) {
-        if (levelFilter >= 0 && static_cast<int>(log.level) != levelFilter) {
-            continue;
-        }
-        if (!textFilter.isEmpty() &&
-            !log.category.contains(textFilter, Qt::CaseInsensitive) &&
-            !log.action.contains(textFilter, Qt::CaseInsensitive)) {
-            continue;
-        }
-        rows.append(log);
-        if (rows.size() >= m_logLimitSpin->value()) {
-            break;
-        }
-    }
+    const auto nowUtc = QDateTime::currentDateTimeUtc();
+    emit operationLogQueryRequested(Monitor::Application::Services::OperationLogQueryRequest{
+        nowUtc.addDays(-7),
+        nowUtc.addSecs(1),
+        levelFilter >= 0
+            ? std::optional<Monitor::Domain::Logs::OperationLogLevel>(
+                  static_cast<Monitor::Domain::Logs::OperationLogLevel>(levelFilter))
+            : std::optional<Monitor::Domain::Logs::OperationLogLevel>(),
+        textFilter.isEmpty() ? std::optional<QString>() : std::optional<QString>(textFilter),
+        1,
+        m_logLimitSpin->value()
+    });
+}
 
-    m_logTable->setRowCount(rows.size());
-    for (auto row = 0; row < rows.size(); ++row) {
-        const auto &log = rows.at(row);
+void LogsSettingsPageWidget::setOperationLogQueryResult(const Monitor::Application::Services::OperationLogQueryPage &result)
+{
+    m_operationLogPage = result;
+    m_logTable->setRowCount(m_operationLogPage.items.size());
+    for (auto row = 0; row < m_operationLogPage.items.size(); ++row) {
+        const auto &log = m_operationLogPage.items.at(row);
         m_logTable->setItem(row, 0, item(localTime(log.timestampUtc)));
         m_logTable->setItem(row, 1, item(Monitor::Domain::Logs::toString(log.level)));
         m_logTable->setItem(row, 2, item(log.category));

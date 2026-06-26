@@ -7,6 +7,7 @@
 #include "application/runtime/PersistenceRuntimeCoordinator.h"
 #include "application/services/AlarmService.h"
 #include "application/services/OperationLogService.h"
+#include "application/services/QueryServices.h"
 #include "application/services/RuntimeEventConsumers.h"
 #include "application/services/TagDefinitionCatalog.h"
 #include "application/services/UiSnapshotProvider.h"
@@ -587,6 +588,9 @@ void runRuntimeCompositionObjectGraphTests()
     expect(composition.chartDataService(), QStringLiteral("Composition must expose ChartDataService."));
     expect(composition.measurementMapService(), QStringLiteral("Composition must expose MeasurementMapService."));
     expect(composition.operationLogService(), QStringLiteral("Composition must expose OperationLogService."));
+    expect(composition.historyQueryService(), QStringLiteral("Composition must expose HistoryQueryService."));
+    expect(composition.alarmQueryService(), QStringLiteral("Composition must expose AlarmQueryService."));
+    expect(composition.operationLogQueryService(), QStringLiteral("Composition must expose OperationLogQueryService."));
     expect(composition.runtimeCommandFacade(), QStringLiteral("Composition must expose RuntimeCommandFacade."));
     expect(composition.runtimeUiSnapshotProvider(), QStringLiteral("Composition must expose RuntimeUiSnapshotProvider."));
     expect(composition.dataSourceHealthMonitor(), QStringLiteral("Composition must expose DataSourceHealthMonitor."));
@@ -724,6 +728,86 @@ void runApplicationRuntimeHostLifecycleTests()
     expect(containsLogAction(logs, QStringLiteral("History.RetentionCleanup")), QStringLiteral("Host startup must execute history retention cleanup."));
 }
 
+void runPageQueryServicesReadSqliteTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary query service database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("page-query-services.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize query services: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    QStringList startErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&startErrors),
+        QStringLiteral("Host must start before query service persistence check: %1")
+            .arg(startErrors.join(QStringLiteral("; "))));
+
+    auto frame = createFrame(168, utcTime(80'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.6;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must enqueue data for query services: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+
+    QStringList stopErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&stopErrors),
+        QStringLiteral("Host shutdown must flush query service persistence inputs: %1")
+            .arg(stopErrors.join(QStringLiteral("; "))));
+
+    const auto historyPage = composition.historyQueryService()->query(
+        Monitor::Application::Services::HistoryQueryRequest{
+            QStringLiteral("MEAS.VIBRATION.CH01"),
+            frame.timestampUtc.addMSecs(-1),
+            frame.timestampUtc.addMSecs(1),
+            1,
+            10,
+            true
+        });
+    expect(!historyPage.items.isEmpty(), QStringLiteral("HistoryQueryService must read persisted SQLite history samples."));
+    expect(historyPage.totalCount >= historyPage.items.size(), QStringLiteral("HistoryQueryService must report total history sample count."));
+
+    const auto alarmPage = composition.alarmQueryService()->query(
+        Monitor::Application::Services::AlarmHistoryQueryRequest{
+            frame.timestampUtc.addMSecs(-1),
+            frame.timestampUtc.addMSecs(1),
+            QStringLiteral("MEAS.VIBRATION.CH01"),
+            std::nullopt,
+            std::nullopt,
+            1,
+            10,
+            false
+        });
+    expect(!alarmPage.items.isEmpty(), QStringLiteral("AlarmQueryService must read persisted SQLite alarm events."));
+    expect(alarmPage.items.first().tagId == QStringLiteral("MEAS.VIBRATION.CH01"), QStringLiteral("AlarmQueryService must honor tag filters."));
+
+    const auto nowUtc = QDateTime::currentDateTimeUtc();
+    const auto logPage = composition.operationLogQueryService()->query(
+        Monitor::Application::Services::OperationLogQueryRequest{
+            nowUtc.addDays(-1),
+            nowUtc.addDays(1),
+            std::nullopt,
+            QStringLiteral("Raised"),
+            1,
+            20
+        });
+    expect(!logPage.items.isEmpty(), QStringLiteral("OperationLogQueryService must read persisted SQLite operation logs."));
+    expect(containsLogAction(logPage.items, QStringLiteral("Alarm.Raised")), QStringLiteral("OperationLogQueryService must support action text filtering."));
+}
+
 void runRuntimeUiSnapshotProviderReadsRuntimeStateTests()
 {
     QTemporaryDir directory;
@@ -859,6 +943,7 @@ int main(int argc, char *argv[])
         {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
         {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests},
         {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests},
+        {QStringLiteral("PageQueryServicesReadSqlite"), runPageQueryServicesReadSqliteTests},
         {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests},
         {QStringLiteral("RuntimeCommandFacadeControlsRuntime"), runRuntimeCommandFacadeControlsRuntimeTests}
     };

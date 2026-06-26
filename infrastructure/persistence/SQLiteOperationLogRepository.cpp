@@ -196,7 +196,7 @@ QVector<Monitor::Domain::Logs::OperationLog> SQLiteOperationLogRepository::query
         WHERE timestamp_utc_ticks >= :startTimeUtcTicks
           AND timestamp_utc_ticks <= :endTimeUtcTicks
           AND (:level IS NULL OR level = :level)
-          AND (:category = '' OR category = :category COLLATE NOCASE)
+          AND (:logText = '' OR category = :logText COLLATE NOCASE OR action LIKE :logTextPattern COLLATE NOCASE)
         ORDER BY timestamp_utc_ticks DESC, id DESC
         LIMIT :maxCount;
     )SQL"));
@@ -205,9 +205,11 @@ QVector<Monitor::Domain::Logs::OperationLog> SQLiteOperationLogRepository::query
     query.bindValue(QStringLiteral(":level"), operationLogQuery.level.has_value()
             ? QVariant(static_cast<int>(operationLogQuery.level.value()))
             : QVariant());
-    query.bindValue(QStringLiteral(":category"), operationLogQuery.category.has_value()
+    const auto logText = operationLogQuery.category.has_value()
             ? operationLogQuery.category->trimmed()
-            : QString());
+            : QString();
+    query.bindValue(QStringLiteral(":logText"), logText);
+    query.bindValue(QStringLiteral(":logTextPattern"), QStringLiteral("%") + logText + QStringLiteral("%"));
     query.bindValue(QStringLiteral(":maxCount"), operationLogQuery.maxCount);
     if (!query.exec()) {
         throwSql(QStringLiteral("Failed to query operation logs"), query);
@@ -227,7 +229,7 @@ Monitor::Domain::Logs::OperationLogQueryResult SQLiteOperationLogRepository::que
         WHERE timestamp_utc_ticks >= :startTimeUtcTicks
           AND timestamp_utc_ticks <= :endTimeUtcTicks
           AND (:level IS NULL OR level = :level)
-          AND (:category = '' OR category = :category COLLATE NOCASE)
+          AND (:logText = '' OR category = :logText COLLATE NOCASE OR action LIKE :logTextPattern COLLATE NOCASE)
     )SQL");
 
     QSqlQuery countQuery(database);
@@ -237,9 +239,11 @@ Monitor::Domain::Logs::OperationLogQueryResult SQLiteOperationLogRepository::que
     countQuery.bindValue(QStringLiteral(":level"), operationLogQuery.level.has_value()
             ? QVariant(static_cast<int>(operationLogQuery.level.value()))
             : QVariant());
-    countQuery.bindValue(QStringLiteral(":category"), operationLogQuery.category.has_value()
+    const auto logText = operationLogQuery.category.has_value()
             ? operationLogQuery.category->trimmed()
-            : QString());
+            : QString();
+    countQuery.bindValue(QStringLiteral(":logText"), logText);
+    countQuery.bindValue(QStringLiteral(":logTextPattern"), QStringLiteral("%") + logText + QStringLiteral("%"));
     if (!countQuery.exec() || !countQuery.next()) {
         throwSql(QStringLiteral("Failed to count operation logs"), countQuery);
     }
@@ -256,9 +260,8 @@ Monitor::Domain::Logs::OperationLogQueryResult SQLiteOperationLogRepository::que
     query.bindValue(QStringLiteral(":level"), operationLogQuery.level.has_value()
             ? QVariant(static_cast<int>(operationLogQuery.level.value()))
             : QVariant());
-    query.bindValue(QStringLiteral(":category"), operationLogQuery.category.has_value()
-            ? operationLogQuery.category->trimmed()
-            : QString());
+    query.bindValue(QStringLiteral(":logText"), logText);
+    query.bindValue(QStringLiteral(":logTextPattern"), QStringLiteral("%") + logText + QStringLiteral("%"));
     query.bindValue(QStringLiteral(":pageSize"), operationLogQuery.pageSize);
     query.bindValue(QStringLiteral(":offset"), (operationLogQuery.page - 1) * operationLogQuery.pageSize);
     if (!query.exec()) {

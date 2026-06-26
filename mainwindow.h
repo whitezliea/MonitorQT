@@ -12,6 +12,9 @@ struct UiSnapshot;
 }
 
 namespace Monitor::Application::Services {
+class AlarmQueryService;
+class HistoryQueryService;
+class OperationLogQueryService;
 class RuntimeCommandFacade;
 class RuntimeUiSnapshotProvider;
 }
@@ -39,6 +42,9 @@ public:
     explicit MainWindow(
         Monitor::Application::Services::RuntimeCommandFacade *runtimeCommands,
         Monitor::Application::Services::RuntimeUiSnapshotProvider *snapshotProvider,
+        Monitor::Application::Services::HistoryQueryService *historyQueryService,
+        Monitor::Application::Services::AlarmQueryService *alarmQueryService,
+        Monitor::Application::Services::OperationLogQueryService *operationLogQueryService,
         QWidget *parent = nullptr);
     ~MainWindow() override;
 
@@ -73,6 +79,9 @@ private:
     LogsSettingsPageWidget *m_logsSettingsPage = nullptr;
     Monitor::Application::Services::RuntimeCommandFacade *m_runtimeCommands = nullptr;
     Monitor::Application::Services::RuntimeUiSnapshotProvider *m_snapshotProvider = nullptr;
+    Monitor::Application::Services::HistoryQueryService *m_historyQueryService = nullptr;
+    Monitor::Application::Services::AlarmQueryService *m_alarmQueryService = nullptr;
+    Monitor::Application::Services::OperationLogQueryService *m_operationLogQueryService = nullptr;
 
     bool m_running = false;
     quint64 m_lastFrame = 0;

@@ -19,6 +19,7 @@
 #include "application/services/DashboardService.h"
 #include "application/services/MeasurementMapService.h"
 #include "application/services/OperationLogService.h"
+#include "application/services/QueryServices.h"
 #include "application/services/RuntimeCommandFacade.h"
 #include "application/services/RuntimeEventConsumers.h"
 #include "application/services/RuntimeUiSnapshotProvider.h"
@@ -83,6 +84,9 @@ public:
     Monitor::Application::Services::ChartDataService *chartDataService();
     Monitor::Application::Services::MeasurementMapService *measurementMapService();
     Monitor::Application::Services::OperationLogService *operationLogService();
+    Monitor::Application::Services::HistoryQueryService *historyQueryService();
+    Monitor::Application::Services::AlarmQueryService *alarmQueryService();
+    Monitor::Application::Services::OperationLogQueryService *operationLogQueryService();
     Monitor::Application::Services::RuntimeCommandFacade *runtimeCommandFacade();
     Monitor::Application::Services::RuntimeUiSnapshotProvider *runtimeUiSnapshotProvider();
     Monitor::Application::Services::TagCacheConsumer *tagCacheConsumer();
@@ -132,6 +136,9 @@ private:
     std::unique_ptr<Monitor::Application::Queues::AlarmEventQueue> m_alarmEventQueue;
     std::unique_ptr<Monitor::Application::Queues::OperationLogQueue> m_operationLogQueue;
     std::unique_ptr<Monitor::Application::Services::OperationLogService> m_operationLogService;
+    std::unique_ptr<Monitor::Application::Services::HistoryQueryService> m_historyQueryService;
+    std::unique_ptr<Monitor::Application::Services::AlarmQueryService> m_alarmQueryService;
+    std::unique_ptr<Monitor::Application::Services::OperationLogQueryService> m_operationLogQueryService;
     std::unique_ptr<Monitor::Application::Services::RuntimeCommandFacade> m_runtimeCommandFacade;
     std::unique_ptr<Monitor::Application::Services::RuntimeUiSnapshotProvider> m_runtimeUiSnapshotProvider;
     std::unique_ptr<Monitor::Application::Services::TagCacheConsumer> m_tagCacheConsumer;

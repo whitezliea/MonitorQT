@@ -60,7 +60,10 @@ int main(int argc, char *argv[])
 
     MainWindow w(
         runtimeComposition.runtimeCommandFacade(),
-        runtimeComposition.runtimeUiSnapshotProvider());
+        runtimeComposition.runtimeUiSnapshotProvider(),
+        runtimeComposition.historyQueryService(),
+        runtimeComposition.alarmQueryService(),
+        runtimeComposition.operationLogQueryService());
     w.show();
     const auto exitCode = QApplication::exec();
 

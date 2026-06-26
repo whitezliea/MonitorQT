@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "application/configuration/MonitorRuntimeOptions.h"
+#include "application/services/QueryServices.h"
 #include "application/services/RuntimeCommandFacade.h"
 #include "application/services/RuntimeUiSnapshotProvider.h"
 #include "application/services/TagDefinitionCatalog.h"
@@ -34,13 +35,19 @@ Monitor::Application::Configuration::MonitorRuntimeOptions defaultRuntimeOptions
 MainWindow::MainWindow(
     Monitor::Application::Services::RuntimeCommandFacade *runtimeCommands,
     Monitor::Application::Services::RuntimeUiSnapshotProvider *snapshotProvider,
+    Monitor::Application::Services::HistoryQueryService *historyQueryService,
+    Monitor::Application::Services::AlarmQueryService *alarmQueryService,
+    Monitor::Application::Services::OperationLogQueryService *operationLogQueryService,
     QWidget *parent)
     : QMainWindow(parent)
     , m_runtimeCommands(runtimeCommands)
     , m_snapshotProvider(snapshotProvider)
+    , m_historyQueryService(historyQueryService)
+    , m_alarmQueryService(alarmQueryService)
+    , m_operationLogQueryService(operationLogQueryService)
 {
-    if (!m_runtimeCommands || !m_snapshotProvider) {
-        throw std::invalid_argument("MainWindow requires runtime command facade and snapshot provider.");
+    if (!m_runtimeCommands || !m_snapshotProvider || !m_historyQueryService || !m_alarmQueryService || !m_operationLogQueryService) {
+        throw std::invalid_argument("MainWindow requires runtime facades, snapshot provider, and query services.");
     }
 
     setupUi();
@@ -189,6 +196,30 @@ void MainWindow::createPages()
 
     connect(m_alarmCenterPage, &AlarmCenterPageWidget::acknowledgeRequested,
             this, &MainWindow::acknowledgeAlarm);
+    connect(m_alarmCenterPage, &AlarmCenterPageWidget::alarmHistoryQueryRequested,
+            this, [this](const Monitor::Application::Services::AlarmHistoryQueryRequest &request) {
+                try {
+                    m_alarmCenterPage->setAlarmHistoryResult(m_alarmQueryService->query(request));
+                } catch (const std::exception &exception) {
+                    qWarning().noquote() << "Alarm history query failed:" << QString::fromUtf8(exception.what());
+                }
+            });
+    connect(m_historyPage, &HistoryPageWidget::historyQueryRequested,
+            this, [this](const Monitor::Application::Services::HistoryQueryRequest &request) {
+                try {
+                    m_historyPage->setHistoryQueryResult(m_historyQueryService->query(request));
+                } catch (const std::exception &exception) {
+                    qWarning().noquote() << "History query failed:" << QString::fromUtf8(exception.what());
+                }
+            });
+    connect(m_logsSettingsPage, &LogsSettingsPageWidget::operationLogQueryRequested,
+            this, [this](const Monitor::Application::Services::OperationLogQueryRequest &request) {
+                try {
+                    m_logsSettingsPage->setOperationLogQueryResult(m_operationLogQueryService->query(request));
+                } catch (const std::exception &exception) {
+                    qWarning().noquote() << "Operation log query failed:" << QString::fromUtf8(exception.what());
+                }
+            });
     connect(m_logsSettingsPage, &LogsSettingsPageWidget::runtimeOptionsSaveRequested,
             this, [this](const Monitor::Application::Configuration::MonitorRuntimeOptions &options) {
                 QStringList errors;

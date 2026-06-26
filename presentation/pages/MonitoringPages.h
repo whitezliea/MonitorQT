@@ -2,6 +2,7 @@
 #define MONITORINGPAGES_H
 
 #include "application/dto/ApplicationDtos.h"
+#include "application/services/QueryServices.h"
 
 #include <optional>
 
@@ -127,14 +128,20 @@ public:
 
 signals:
     void acknowledgeRequested(const QUuid &alarmId);
+    void alarmHistoryQueryRequested(const Monitor::Application::Services::AlarmHistoryQueryRequest &request);
+
+public slots:
+    void setAlarmHistoryResult(const Monitor::Application::Services::AlarmHistoryQueryPage &result);
 
 private:
     void acknowledgeSelected();
     void applyHistoryFilter();
     void previousHistoryPage();
     void nextHistoryPage();
+    void renderAlarmHistory();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
+    Monitor::Application::Services::AlarmHistoryQueryPage m_alarmHistoryPage;
     QTableWidget *m_currentTable = nullptr;
     QLineEdit *m_historyFilterEdit = nullptr;
     QLabel *m_historyPageLabel = nullptr;
@@ -152,6 +159,12 @@ public:
     explicit HistoryPageWidget(QWidget *parent = nullptr);
     void refresh(const Monitor::Application::Dtos::UiSnapshot &snapshot);
 
+signals:
+    void historyQueryRequested(const Monitor::Application::Services::HistoryQueryRequest &request);
+
+public slots:
+    void setHistoryQueryResult(const Monitor::Application::Services::HistoryQueryPage &result);
+
 private:
     void rebuildTagList(const Monitor::Application::Dtos::UiSnapshot &snapshot);
     void applyQuery();
@@ -161,6 +174,7 @@ private:
     void exportCurrentRows();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
+    Monitor::Application::Services::HistoryQueryPage m_historyPage;
     QComboBox *m_tagCombo = nullptr;
     QSpinBox *m_limitSpin = nullptr;
     QLabel *m_pageLabel = nullptr;
@@ -209,6 +223,10 @@ signals:
     void runtimeOptionsSaveRequested(const Monitor::Application::Configuration::MonitorRuntimeOptions &options);
     void tagConfigurationsSaveRequested(
         const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations);
+    void operationLogQueryRequested(const Monitor::Application::Services::OperationLogQueryRequest &request);
+
+public slots:
+    void setOperationLogQueryResult(const Monitor::Application::Services::OperationLogQueryPage &result);
 
 private:
     void applyLogFilter();
@@ -217,6 +235,7 @@ private:
     void populateConfigurationRows();
 
     Monitor::Application::Dtos::UiSnapshot m_snapshot;
+    Monitor::Application::Services::OperationLogQueryPage m_operationLogPage;
     QTableWidget *m_logTable = nullptr;
     QComboBox *m_logLevelCombo = nullptr;
     QLineEdit *m_logCategoryEdit = nullptr;
