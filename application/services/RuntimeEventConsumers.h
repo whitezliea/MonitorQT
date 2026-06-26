@@ -39,6 +39,10 @@ public:
     HistoryRuntimeStateConsumer(
         Monitor::Application::Queues::HistorySampleQueue *queue,
         const QVector<Monitor::Domain::Tags::TagDefinition> &definitions);
+    HistoryRuntimeStateConsumer(
+        Monitor::Application::Queues::HistorySampleQueue *queue,
+        const QVector<Monitor::Domain::Tags::TagDefinition> &definitions,
+        const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations);
 
     void handle(const Monitor::Application::Events::ApplicationEvent &event);
 

@@ -249,6 +249,32 @@ bool RuntimeComposition::initialize(QStringList *errors)
             m_operationLogQueue = std::make_unique<Monitor::Application::Queues::OperationLogQueue>();
             m_operationLogService = std::make_unique<Monitor::Application::Services::OperationLogService>(
                 m_operationLogQueue.get());
+            m_tagCacheConsumer = std::make_unique<Monitor::Application::Services::TagCacheConsumer>(
+                m_tagService.get());
+            m_measurementMapFrameConsumer = std::make_unique<Monitor::Application::Services::MeasurementMapFrameConsumer>(
+                m_measurementMapService.get());
+            m_historyRuntimeStateConsumer = std::make_unique<Monitor::Application::Services::HistoryRuntimeStateConsumer>(
+                m_historySampleQueue.get(),
+                m_tagDefinitions,
+                m_tagRuntimeConfigurations);
+            m_alarmEventConsumer = std::make_unique<Monitor::Application::Services::AlarmEventConsumer>(
+                m_alarmEventQueue.get());
+            m_alarmOperationLogConsumer = std::make_unique<Monitor::Application::Services::AlarmOperationLogConsumer>(
+                m_operationLogService.get());
+            m_dataSourceHealthOperationLogConsumer = std::make_unique<Monitor::Application::Services::DataSourceHealthOperationLogConsumer>(
+                m_operationLogService.get());
+            if (!Monitor::Application::Services::registerDefaultRuntimeConsumers(
+                    m_eventBus.get(),
+                    m_tagCacheConsumer.get(),
+                    m_measurementMapFrameConsumer.get(),
+                    m_historyRuntimeStateConsumer.get(),
+                    m_alarmEventConsumer.get(),
+                    m_alarmOperationLogConsumer.get(),
+                    m_dataSourceHealthOperationLogConsumer.get(),
+                    errors)) {
+                throw std::runtime_error("Failed to register default runtime event consumers.");
+            }
+
             m_dataSourceHealthMonitor = std::make_unique<Monitor::Application::Runtime::DataSourceHealthMonitor>();
             if (m_dependencies.useSimulatorDataSource) {
                 m_simulatorDataSource = std::make_unique<Monitor::Simulator::Adapters::SimulatorDataSource>(
@@ -440,6 +466,36 @@ Monitor::Application::Services::MeasurementMapService *RuntimeComposition::measu
 Monitor::Application::Services::OperationLogService *RuntimeComposition::operationLogService()
 {
     return m_operationLogService.get();
+}
+
+Monitor::Application::Services::TagCacheConsumer *RuntimeComposition::tagCacheConsumer()
+{
+    return m_tagCacheConsumer.get();
+}
+
+Monitor::Application::Services::MeasurementMapFrameConsumer *RuntimeComposition::measurementMapFrameConsumer()
+{
+    return m_measurementMapFrameConsumer.get();
+}
+
+Monitor::Application::Services::HistoryRuntimeStateConsumer *RuntimeComposition::historyRuntimeStateConsumer()
+{
+    return m_historyRuntimeStateConsumer.get();
+}
+
+Monitor::Application::Services::AlarmEventConsumer *RuntimeComposition::alarmEventConsumer()
+{
+    return m_alarmEventConsumer.get();
+}
+
+Monitor::Application::Services::AlarmOperationLogConsumer *RuntimeComposition::alarmOperationLogConsumer()
+{
+    return m_alarmOperationLogConsumer.get();
+}
+
+Monitor::Application::Services::DataSourceHealthOperationLogConsumer *RuntimeComposition::dataSourceHealthOperationLogConsumer()
+{
+    return m_dataSourceHealthOperationLogConsumer.get();
 }
 
 Monitor::Application::Runtime::DataSourceHealthMonitor *RuntimeComposition::dataSourceHealthMonitor()

@@ -592,6 +592,67 @@ void runRuntimeCompositionObjectGraphTests()
     expect(composition.acquisitionRuntimeController(), QStringLiteral("Composition must expose AcquisitionRuntimeController."));
 }
 
+void runEventBusHandlersDriveRuntimeConsumersTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary composition database directory."));
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = directory.filePath(QStringLiteral("eventbus-consumers.db"));
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize event handlers: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+    expect(composition.tagCacheConsumer(), QStringLiteral("Composition must own TagCacheConsumer."));
+    expect(composition.measurementMapFrameConsumer(), QStringLiteral("Composition must own MeasurementMapFrameConsumer."));
+    expect(composition.historyRuntimeStateConsumer(), QStringLiteral("Composition must own HistoryRuntimeStateConsumer."));
+    expect(composition.alarmEventConsumer(), QStringLiteral("Composition must own AlarmEventConsumer."));
+    expect(composition.alarmOperationLogConsumer(), QStringLiteral("Composition must own AlarmOperationLogConsumer."));
+    expect(composition.dataSourceHealthOperationLogConsumer(), QStringLiteral("Composition must own DataSourceHealthOperationLogConsumer."));
+
+    auto frame = createFrame(42, utcTime(20'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("MEAS.VIBRATION.CH01") ||
+            channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.2;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime processFrame must publish through bound handlers: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+
+    expect(!composition.tagService()->snapshot().currentValues.isEmpty(), QStringLiteral("TagCacheConsumer must update TagService cache."));
+    expect(composition.measurementMapService()->latestSnapshot().has_value(), QStringLiteral("MeasurementMapFrameConsumer must update latest matrix snapshot."));
+    expect(composition.historySampleQueue()->size() > 0, QStringLiteral("HistoryRuntimeStateConsumer must enqueue history samples."));
+    expect(composition.alarmEventQueue()->size() > 0, QStringLiteral("AlarmEventConsumer must enqueue raised alarm events."));
+    expect(composition.operationLogQueue()->size() > 0, QStringLiteral("AlarmOperationLogConsumer must enqueue operation logs."));
+
+    const auto currentAlarms = composition.alarmService()->currentAlarms();
+    expect(!currentAlarms.isEmpty(), QStringLiteral("AlarmService must keep active alarms after handler-driven frame processing."));
+    const auto alarmQueueSizeBeforeAcknowledge = composition.alarmEventQueue()->size();
+    const auto logQueueSizeBeforeAcknowledge = composition.operationLogQueue()->size();
+
+    AlarmEvent acknowledged;
+    QStringList acknowledgeErrors;
+    expect(
+        composition.monitoringRuntimeService()->acknowledgeAlarm(
+            currentAlarms.first().alarmId,
+            utcTime(20'500),
+            &acknowledged,
+            &acknowledgeErrors),
+        QStringLiteral("Acknowledge must publish through bound alarm handlers: %1")
+            .arg(acknowledgeErrors.join(QStringLiteral("; "))));
+    expect(acknowledged.state == AlarmState::Acknowledged, QStringLiteral("Acknowledged alarm must be returned from runtime service."));
+    expect(composition.alarmEventQueue()->size() > alarmQueueSizeBeforeAcknowledge, QStringLiteral("AlarmEventConsumer must enqueue acknowledged alarm event."));
+    expect(composition.operationLogQueue()->size() > logQueueSizeBeforeAcknowledge, QStringLiteral("AlarmOperationLogConsumer must enqueue acknowledged operation log."));
+}
+
 struct TestCase
 {
     QString name;
@@ -614,7 +675,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("SqliteRepositories"), runSqliteRepositoryTests},
         {QStringLiteral("CsvExport"), runCsvExportTests},
         {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests},
-        {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests}
+        {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests},
+        {QStringLiteral("EventBusHandlersDriveRuntimeConsumers"), runEventBusHandlersDriveRuntimeConsumersTests}
     };
 
     auto failed = 0;

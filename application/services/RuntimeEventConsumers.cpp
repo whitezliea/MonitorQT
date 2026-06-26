@@ -64,6 +64,20 @@ QHash<QString, Monitor::Application::Configuration::TagRuntimeConfiguration> con
     return result;
 }
 
+QHash<QString, Monitor::Application::Configuration::TagRuntimeConfiguration> configurationSnapshot(
+    const QVector<Monitor::Domain::Tags::TagDefinition> &definitions,
+    const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations)
+{
+    auto result = configurationSnapshot(definitions);
+    for (const auto &configuration : configurations) {
+        if (result.contains(configuration.tagId)) {
+            result.insert(configuration.tagId, configuration);
+        }
+    }
+
+    return result;
+}
+
 std::optional<Monitor::Domain::Alarms::AlarmEvent> alarmFromEvent(
     const Monitor::Application::Events::ApplicationEvent &event)
 {
@@ -128,6 +142,18 @@ HistoryRuntimeStateConsumer::HistoryRuntimeStateConsumer(
     const QVector<Monitor::Domain::Tags::TagDefinition> &definitions)
     : m_queue(queue),
       m_configurations(configurationSnapshot(definitions))
+{
+    if (!m_queue) {
+        throw std::invalid_argument("HistorySampleQueue must not be null.");
+    }
+}
+
+HistoryRuntimeStateConsumer::HistoryRuntimeStateConsumer(
+    Monitor::Application::Queues::HistorySampleQueue *queue,
+    const QVector<Monitor::Domain::Tags::TagDefinition> &definitions,
+    const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations)
+    : m_queue(queue),
+      m_configurations(configurationSnapshot(definitions, configurations))
 {
     if (!m_queue) {
         throw std::invalid_argument("HistorySampleQueue must not be null.");
