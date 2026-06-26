@@ -918,6 +918,122 @@ void runRuntimeCommandFacadeControlsRuntimeTests()
             .arg(shutdownErrors.join(QStringLiteral("; "))));
 }
 
+void runSettingsSaveReloadsFromSqliteTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary settings database directory."));
+
+    const auto databasePath = directory.filePath(QStringLiteral("settings-save-reload.db"));
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = databasePath;
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList initializeErrors;
+    expect(
+        composition.initialize(&initializeErrors),
+        QStringLiteral("RuntimeComposition must initialize settings save dependencies: %1")
+            .arg(initializeErrors.join(QStringLiteral("; "))));
+
+    auto options = composition.runtimeOptionsStore()->snapshot();
+    options.uiRefreshIntervalMs = 333;
+    options.dataGenerateIntervalMs = 650;
+    options.historyRetentionDays = 11;
+    QStringList runtimeSaveErrors;
+    expect(
+        composition.runtimeCommandFacade()->saveRuntimeOptions(options, &runtimeSaveErrors),
+        QStringLiteral("RuntimeCommandFacade must persist runtime options: %1")
+            .arg(runtimeSaveErrors.join(QStringLiteral("; "))));
+    expect(
+        composition.runtimeUiSnapshotProvider()->refresh().runtimeOptions.uiRefreshIntervalMs == 333,
+        QStringLiteral("Runtime options save must update RuntimeOptionsStore immediately."));
+    const auto savedSettings = composition.configurationRepository()->loadRuntimeSettings();
+    expect(
+        savedSettings.value(Monitor::Application::Configuration::RuntimeSettingKeys::UiRefreshIntervalMs) == QStringLiteral("333"),
+        QStringLiteral("Runtime options save must persist UI refresh interval to SQLite."));
+    expect(
+        savedSettings.value(Monitor::Application::Configuration::RuntimeSettingKeys::DataGenerateIntervalMs) == QStringLiteral("650"),
+        QStringLiteral("Runtime options save must persist acquisition interval to SQLite."));
+
+    auto configurations = composition.tagRuntimeConfigurations();
+    auto vibrationIt = std::find_if(configurations.begin(), configurations.end(), [](const auto &configuration) {
+        return configuration.tagId == QStringLiteral("MEAS.VIBRATION.CH01");
+    });
+    expect(vibrationIt != configurations.end(), QStringLiteral("Default configurations must include vibration tag."));
+    vibrationIt->warningHigh = 3.0;
+    vibrationIt->alarmHigh = 4.0;
+    vibrationIt->isHistorized = false;
+    vibrationIt->historyIntervalMs = 60'000;
+
+    QStringList tagSaveErrors;
+    expect(
+        composition.runtimeCommandFacade()->saveTagConfigurations(configurations, &tagSaveErrors),
+        QStringLiteral("RuntimeCommandFacade must persist tag configurations: %1")
+            .arg(tagSaveErrors.join(QStringLiteral("; "))));
+
+    QStringList hostErrors;
+    expect(
+        composition.applicationRuntimeHost()->start(&hostErrors),
+        QStringLiteral("Host must start to verify saved settings runtime synchronization: %1")
+            .arg(hostErrors.join(QStringLiteral("; "))));
+
+    auto frame = createFrame(210, utcTime(90'000));
+    for (auto &channel : frame.channelValues) {
+        if (channel.channelId == QStringLiteral("VIBRATION_CH01")) {
+            channel.value = 3.6;
+        }
+    }
+
+    QStringList processErrors;
+    expect(
+        composition.monitoringRuntimeService()->processFrame(frame, &processErrors),
+        QStringLiteral("Runtime frame processing must use synchronized tag settings: %1")
+            .arg(processErrors.join(QStringLiteral("; "))));
+    const auto activeAlarm = findAlarm(composition.alarmService()->currentAlarms(), QStringLiteral("MEAS.VIBRATION.CH01"));
+    expect(activeAlarm != nullptr, QStringLiteral("Saved alarm thresholds must still evaluate vibration alarm state."));
+    expect(activeAlarm->level == Monitor::Domain::Alarms::AlarmLevel::Warning,
+           QStringLiteral("Saved alarm thresholds must downgrade 3.6 vibration from alarm to warning."));
+
+    QStringList stopErrors;
+    expect(
+        composition.applicationRuntimeHost()->stop(&stopErrors),
+        QStringLiteral("Host shutdown must flush after saved settings verification: %1")
+            .arg(stopErrors.join(QStringLiteral("; "))));
+
+    const auto historyPage = composition.historyQueryService()->query(
+        Monitor::Application::Services::HistoryQueryRequest{
+            QStringLiteral("MEAS.VIBRATION.CH01"),
+            frame.timestampUtc.addMSecs(-1),
+            frame.timestampUtc.addMSecs(1),
+            1,
+            10,
+            true
+        });
+    expect(historyPage.totalCount == 0, QStringLiteral("Saved historized=false setting must stop new vibration history samples."));
+
+    Monitor::Bootstrap::RuntimeComposition reloaded(dependencies);
+    QStringList reloadErrors;
+    expect(
+        reloaded.initialize(&reloadErrors),
+        QStringLiteral("RuntimeComposition must reload saved settings from SQLite: %1")
+            .arg(reloadErrors.join(QStringLiteral("; "))));
+    expect(
+        reloaded.runtimeOptions().uiRefreshIntervalMs == 333,
+        QStringLiteral("Reloaded composition must restore saved UI refresh interval."));
+    expect(
+        reloaded.runtimeOptions().dataGenerateIntervalMs == 650,
+        QStringLiteral("Reloaded composition must restore saved acquisition interval."));
+    const auto reloadedVibrationIt = std::find_if(
+        reloaded.tagRuntimeConfigurations().cbegin(),
+        reloaded.tagRuntimeConfigurations().cend(),
+        [](const auto &configuration) {
+            return configuration.tagId == QStringLiteral("MEAS.VIBRATION.CH01");
+        });
+    expect(reloadedVibrationIt != reloaded.tagRuntimeConfigurations().cend(), QStringLiteral("Reloaded configurations must include vibration tag."));
+    expect(!reloadedVibrationIt->isHistorized, QStringLiteral("Reloaded tag configuration must preserve historized=false."));
+    expect(reloadedVibrationIt->alarmHigh.has_value() && reloadedVibrationIt->alarmHigh.value() == 4.0,
+           QStringLiteral("Reloaded tag configuration must preserve saved alarm threshold."));
+}
+
 struct TestCase
 {
     QString name;
@@ -945,7 +1061,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("ApplicationRuntimeHostLifecycle"), runApplicationRuntimeHostLifecycleTests},
         {QStringLiteral("PageQueryServicesReadSqlite"), runPageQueryServicesReadSqliteTests},
         {QStringLiteral("RuntimeUiSnapshotProviderReadsRuntimeState"), runRuntimeUiSnapshotProviderReadsRuntimeStateTests},
-        {QStringLiteral("RuntimeCommandFacadeControlsRuntime"), runRuntimeCommandFacadeControlsRuntimeTests}
+        {QStringLiteral("RuntimeCommandFacadeControlsRuntime"), runRuntimeCommandFacadeControlsRuntimeTests},
+        {QStringLiteral("SettingsSaveReloadsFromSqlite"), runSettingsSaveReloadsFromSqliteTests}
     };
 
     auto failed = 0;

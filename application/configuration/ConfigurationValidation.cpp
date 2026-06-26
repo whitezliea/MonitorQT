@@ -72,10 +72,6 @@ void ConfigurationValidation::validateTag(
         throwArgument(QStringLiteral("%1: WarningHigh must be less than or equal to AlarmHigh.").arg(definition.tagId));
     }
 
-    if (configuration.alarmEnabled && numeric && !hasThresholds(configuration)) {
-        throwArgument(QStringLiteral("%1: enabled numeric alarms require at least one threshold.").arg(definition.tagId));
-    }
-
     if (configuration.historyIntervalMs <= 0) {
         throwArgument(QStringLiteral("%1: HistoryIntervalMs must be greater than zero.").arg(definition.tagId));
     }

@@ -10,6 +10,7 @@
 #include "domain/tags/TagModels.h"
 
 #include <QHash>
+#include <QMutex>
 
 namespace Monitor::Application::Services {
 
@@ -45,6 +46,9 @@ public:
         const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations);
 
     void handle(const Monitor::Application::Events::ApplicationEvent &event);
+    void replaceConfigurations(
+        const QVector<Monitor::Domain::Tags::TagDefinition> &definitions,
+        const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations);
 
 private:
     struct SamplingState
@@ -55,13 +59,14 @@ private:
         qint64 revision = 0;
     };
 
-    bool shouldPersist(
+    bool shouldPersistLocked(
         const Monitor::Domain::Tags::TagRuntimeState &state,
         const Monitor::Application::Configuration::TagRuntimeConfiguration &configuration);
 
     Monitor::Application::Queues::HistorySampleQueue *m_queue = nullptr;
     QHash<QString, Monitor::Application::Configuration::TagRuntimeConfiguration> m_configurations;
     QHash<QString, SamplingState> m_lastPersisted;
+    mutable QMutex m_mutex;
 };
 
 class AlarmEventConsumer

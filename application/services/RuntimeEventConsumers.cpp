@@ -2,6 +2,8 @@
 
 #include "domain/common/DomainCommon.h"
 
+#include <QMutexLocker>
+
 #include <algorithm>
 #include <optional>
 #include <stdexcept>
@@ -169,8 +171,24 @@ void HistoryRuntimeStateConsumer::handle(const Monitor::Application::Events::App
 
     for (const auto &state : typed->states) {
         Monitor::Domain::Common::UtcDateTime::require(state.timestampUtc, QStringLiteral("state.timestampUtc"));
-        const auto configurationIt = m_configurations.constFind(state.tagId);
-        if (configurationIt == m_configurations.cend() || !shouldPersist(state, configurationIt.value())) {
+
+        bool shouldPersist = false;
+        {
+            QMutexLocker locker(&m_mutex);
+            const auto configurationIt = m_configurations.constFind(state.tagId);
+            shouldPersist = configurationIt != m_configurations.cend()
+                && shouldPersistLocked(state, configurationIt.value());
+            if (shouldPersist) {
+                m_lastPersisted.insert(state.tagId, {
+                    state.timestampUtc,
+                    state.quality,
+                    state.alarmState,
+                    configurationIt.value().revision
+                });
+            }
+        }
+
+        if (!shouldPersist) {
             continue;
         }
 
@@ -183,16 +201,18 @@ void HistoryRuntimeStateConsumer::handle(const Monitor::Application::Events::App
             state.sourceFrameId.toString(QUuid::WithoutBraces),
             state.sequenceNo
         });
-        m_lastPersisted.insert(state.tagId, {
-            state.timestampUtc,
-            state.quality,
-            state.alarmState,
-            configurationIt.value().revision
-        });
     }
 }
 
-bool HistoryRuntimeStateConsumer::shouldPersist(
+void HistoryRuntimeStateConsumer::replaceConfigurations(
+    const QVector<Monitor::Domain::Tags::TagDefinition> &definitions,
+    const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations)
+{
+    QMutexLocker locker(&m_mutex);
+    m_configurations = configurationSnapshot(definitions, configurations);
+}
+
+bool HistoryRuntimeStateConsumer::shouldPersistLocked(
     const Monitor::Domain::Tags::TagRuntimeState &state,
     const Monitor::Application::Configuration::TagRuntimeConfiguration &configuration)
 {

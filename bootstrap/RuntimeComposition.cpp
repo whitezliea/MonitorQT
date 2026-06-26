@@ -403,7 +403,15 @@ bool RuntimeComposition::initialize(QStringList *errors)
                 m_runtimeOptionsStore.get(),
                 m_tagRuntimeConfigurationStore.get(),
                 m_alarmService.get(),
-                m_operationLogService.get());
+                m_historyRuntimeStateConsumer.get(),
+                m_operationLogService.get(),
+                m_tagDefinitions,
+                [this](const QHash<QString, QString> &settings) {
+                    m_configurationRepository->saveRuntimeSettings(settings);
+                },
+                [this](const QVector<Monitor::Application::Configuration::TagRuntimeConfiguration> &configurations) {
+                    m_configurationRepository->saveTagConfigurations(configurations);
+                });
             m_runtimeUiSnapshotProvider = std::make_unique<Monitor::Application::Services::RuntimeUiSnapshotProvider>(
                 m_runtimeLifecycleCoordinator.get(),
                 m_persistenceRuntimeCoordinator.get(),
