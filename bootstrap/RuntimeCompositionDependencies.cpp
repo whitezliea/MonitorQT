@@ -11,6 +11,7 @@ RuntimeCompositionDependencies RuntimeCompositionDependencies::createDefault()
 {
     RuntimeCompositionDependencies dependencies;
     dependencies.runtimeOptions = Monitor::Application::Configuration::MonitorRuntimeOptions();
+    dependencies.databasePath = {};
     dependencies.databaseDriverName = QStringLiteral("QSQLITE");
     dependencies.defaultDeviceId = Monitor::Application::Services::TagDefinitionCatalog::defaultDeviceId();
     dependencies.useSimulatorDataSource = true;

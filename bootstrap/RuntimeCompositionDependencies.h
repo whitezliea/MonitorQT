@@ -11,6 +11,7 @@ namespace Monitor::Bootstrap {
 struct RuntimeCompositionDependencies
 {
     Monitor::Application::Configuration::MonitorRuntimeOptions runtimeOptions;
+    QString databasePath;
     QString databaseDriverName = QStringLiteral("QSQLITE");
     QString defaultDeviceId;
     bool useSimulatorDataSource = true;

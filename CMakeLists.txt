@@ -306,6 +306,7 @@ endif()
 
 add_executable(MonitorCoreTests
     tests/MonitorCoreTests.cpp
+    ${BOOTSTRAP_SOURCES}
 )
 monitor_apply_target_defaults(MonitorCoreTests)
 target_link_libraries(MonitorCoreTests PRIVATE

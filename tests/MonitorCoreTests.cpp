@@ -11,6 +11,7 @@
 #include "application/services/TagDefinitionCatalog.h"
 #include "application/services/UiSnapshotProvider.h"
 #include "application/workers/BatchPersistWorker.h"
+#include "bootstrap/RuntimeComposition.h"
 #include "domain/DomainLayer.h"
 #include "domain/common/DomainCommon.h"
 #include "domain/devices/DeviceModels.h"
@@ -507,6 +508,90 @@ void runUiSnapshotStartStopTests()
     expect(stopped.shell.lastFrameIndex == running.shell.lastFrameIndex, QStringLiteral("Stopped UI refresh must retain last frame without acquisition."));
 }
 
+void runRuntimeCompositionObjectGraphTests()
+{
+    QTemporaryDir directory;
+    expect(directory.isValid(), QStringLiteral("Test must create a temporary composition database directory."));
+    const auto databasePath = directory.filePath(QStringLiteral("composition.db"));
+
+    {
+        SqliteConnectionFactory factory(databasePath);
+        factory.initialize();
+        SQLiteConfigurationRepository configurationRepository(&factory);
+        configurationRepository.saveRuntimeSettings({
+            {Monitor::Application::Configuration::RuntimeSettingKeys::DataGenerateIntervalMs, QStringLiteral("750")},
+            {Monitor::Application::Configuration::RuntimeSettingKeys::UiRefreshIntervalMs, QStringLiteral("250")}
+        });
+
+        const auto definitions = TagDefinitionCatalog::createDefaults();
+        const auto vibrationDefinition = std::find_if(
+            definitions.cbegin(),
+            definitions.cend(),
+            [](const auto &definition) {
+                return definition.tagId == QStringLiteral("MEAS.VIBRATION.CH01");
+            });
+        expect(vibrationDefinition != definitions.cend(), QStringLiteral("Default catalog must contain vibration tag."));
+        auto vibration = Monitor::Application::Configuration::TagRuntimeConfiguration::fromDefinition(*vibrationDefinition);
+        vibration.alarmHigh = 3.5;
+        configurationRepository.saveTagConfigurations({vibration});
+    }
+
+    auto dependencies = Monitor::Bootstrap::RuntimeCompositionDependencies::createDefault();
+    dependencies.databasePath = databasePath;
+
+    Monitor::Bootstrap::RuntimeComposition composition(dependencies);
+    QStringList errors;
+    const auto initialized = composition.initialize(&errors);
+    expect(
+        initialized,
+        QStringLiteral("RuntimeComposition must initialize full object graph. ErrorCount=%1 Errors=%2")
+            .arg(errors.size())
+            .arg(errors.join(QStringLiteral("; "))));
+
+    expect(composition.sqliteConnectionFactory(), QStringLiteral("Composition must expose SQLite connection factory."));
+    expect(composition.historyRepository(), QStringLiteral("Composition must expose history repository."));
+    expect(composition.alarmRepository(), QStringLiteral("Composition must expose alarm repository."));
+    expect(composition.operationLogRepository(), QStringLiteral("Composition must expose operation log repository."));
+    expect(composition.configurationRepository(), QStringLiteral("Composition must expose configuration repository."));
+    expect(composition.eventBus(), QStringLiteral("Composition must expose EventBus."));
+    expect(!composition.tagDefinitions().isEmpty(), QStringLiteral("Composition must hold default tag definitions."));
+    expect(composition.tagSourceMappings().size() == composition.tagDefinitions().size(), QStringLiteral("Composition must hold tag source mappings."));
+    expect(composition.tagRuntimeConfigurations().size() == composition.tagDefinitions().size(), QStringLiteral("Composition must merge tag runtime configurations."));
+    expect(composition.runtimeOptions().dataGenerateIntervalMs == 750, QStringLiteral("Composition must load runtime settings from SQLite."));
+    expect(composition.runtimeOptions().uiRefreshIntervalMs == 250, QStringLiteral("Composition must load UI refresh setting from SQLite."));
+
+    const auto configIt = std::find_if(
+        composition.tagRuntimeConfigurations().cbegin(),
+        composition.tagRuntimeConfigurations().cend(),
+        [](const auto &configuration) {
+            return configuration.tagId == QStringLiteral("MEAS.VIBRATION.CH01");
+        });
+    expect(configIt != composition.tagRuntimeConfigurations().cend(), QStringLiteral("Composition must include vibration tag configuration."));
+    expect(configIt->alarmHigh.has_value() && configIt->alarmHigh.value() == 3.5, QStringLiteral("Composition must load tag runtime configuration overrides."));
+
+    expect(composition.runtimeOptionsStore(), QStringLiteral("Composition must expose RuntimeOptionsStore."));
+    expect(composition.tagRuntimeConfigurationStore(), QStringLiteral("Composition must expose TagRuntimeConfigurationStore."));
+    expect(composition.dataCleanPipeline(), QStringLiteral("Composition must expose DataCleanPipeline."));
+    expect(composition.alarmService(), QStringLiteral("Composition must expose AlarmService."));
+    expect(composition.tagService(), QStringLiteral("Composition must expose TagService."));
+    expect(composition.dashboardService(), QStringLiteral("Composition must expose DashboardService."));
+    expect(composition.chartDataService(), QStringLiteral("Composition must expose ChartDataService."));
+    expect(composition.measurementMapService(), QStringLiteral("Composition must expose MeasurementMapService."));
+    expect(composition.operationLogService(), QStringLiteral("Composition must expose OperationLogService."));
+    expect(composition.dataSourceHealthMonitor(), QStringLiteral("Composition must expose DataSourceHealthMonitor."));
+    expect(composition.simulatorDataSource(), QStringLiteral("Composition must expose SimulatorDataSource."));
+    expect(composition.monitoringRuntimeService(), QStringLiteral("Composition must expose MonitoringRuntimeService."));
+    expect(composition.historySampleQueue(), QStringLiteral("Composition must expose history queue."));
+    expect(composition.alarmEventQueue(), QStringLiteral("Composition must expose alarm queue."));
+    expect(composition.operationLogQueue(), QStringLiteral("Composition must expose operation log queue."));
+    expect(composition.historyPersistWorker() && composition.historyPersistWorker()->name() == QStringLiteral("History"), QStringLiteral("Composition must expose history worker."));
+    expect(composition.alarmPersistWorker() && composition.alarmPersistWorker()->name() == QStringLiteral("Alarm"), QStringLiteral("Composition must expose alarm worker."));
+    expect(composition.operationLogPersistWorker() && composition.operationLogPersistWorker()->name() == QStringLiteral("OperationLog"), QStringLiteral("Composition must expose operation log worker."));
+    expect(composition.persistenceRuntimeCoordinator(), QStringLiteral("Composition must expose PersistenceRuntimeCoordinator."));
+    expect(composition.runtimeLifecycleCoordinator(), QStringLiteral("Composition must expose RuntimeLifecycleCoordinator."));
+    expect(composition.acquisitionRuntimeController(), QStringLiteral("Composition must expose AcquisitionRuntimeController."));
+}
+
 struct TestCase
 {
     QString name;
@@ -528,7 +613,8 @@ int main(int argc, char *argv[])
         {QStringLiteral("QueueAndWorker"), runQueueAndWorkerTests},
         {QStringLiteral("SqliteRepositories"), runSqliteRepositoryTests},
         {QStringLiteral("CsvExport"), runCsvExportTests},
-        {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests}
+        {QStringLiteral("UiSnapshotStartStop"), runUiSnapshotStartStopTests},
+        {QStringLiteral("RuntimeCompositionObjectGraph"), runRuntimeCompositionObjectGraphTests}
     };
 
     auto failed = 0;
